@@ -1,7 +1,10 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { UserProfile, ThaiLesson } from "../types";
 
-// 获取所有可用的 API Key
+// ============================================================
+// API Key 管理
+// ============================================================
+
 export function getAvailableKeys(): { index: number; label: string; available: boolean }[] {
   const keys = [
     (import.meta as any).env?.VITE_GEMINI_API_KEY_1 || "",
@@ -15,8 +18,7 @@ export function getAvailableKeys(): { index: number; label: string; available: b
   }));
 }
 
-// 根据选择的 Key 编号获取对应的 Key 值
-function getApiKey(keyIndex: number = 1): string {
+function getGeminiApiKey(keyIndex: number = 1): string {
   const keys: Record<number, string> = {
     1: (import.meta as any).env?.VITE_GEMINI_API_KEY_1 || "",
     2: (import.meta as any).env?.VITE_GEMINI_API_KEY_2 || "",
@@ -25,10 +27,18 @@ function getApiKey(keyIndex: number = 1): string {
   return keys[keyIndex] || keys[1] || "";
 }
 
-function getAIInstance(keyIndex: number = 1) {
-  const apiKey = getApiKey(keyIndex);
+function getHuggingFaceToken(): string {
+  return (import.meta as any).env?.VITE_HF_TOKEN || "";
+}
+
+function getGeminiInstance(keyIndex: number = 1) {
+  const apiKey = getGeminiApiKey(keyIndex);
   return new GoogleGenAI({ apiKey });
 }
+
+// ============================================================
+// 文字课程生成（Gemini 2.5 Flash）
+// ============================================================
 
 export async function generateThaiLesson(
   profile: UserProfile,
@@ -36,7 +46,7 @@ export async function generateThaiLesson(
   keyIndex: number = 1
 ): Promise<ThaiLesson> {
   const isKid = profile.age === 'primary' || profile.age === 'middle' || (typeof profile.age === 'number' && profile.age < 12);
-  const ai = getAIInstance(keyIndex);
+  const ai = getGeminiInstance(keyIndex);
 
   const systemInstruction = `
     You are an expert Thai language teacher. 
@@ -82,7 +92,7 @@ export async function generateThaiLesson(
          * 'audioText': The TRADITIONAL FULL NAME of the character for accurate pronunciation (e.g., 'ก ไก่' for ก, 'ฝ ฝา' for ฝ). THIS IS CRITICAL for single characters.
     6. Language: Use ${profile.auxiliaryLanguage} for all explanations, translations, and instructions.
     7. Formatting: Return the response in JSON format according to the specified schema.
-    8. Vocabulary Image Prompts: For each vocabulary word/character, provide a highly detailed 'imagePrompt' (scenic, high-quality, 3D render or professional photo style) reflecting the meaning or a mnemonic for the character in a Thai context.
+    8. Vocabulary Image Prompts: For each vocabulary word/character, provide a highly detailed 'imagePrompt' (scenic, high-quality, 3D render or professional photo style) reflecting the meaning or a mnemonic for the character in a Thai context. Write prompts in English only.
     9. Pronunciation: Ensure 'content' and 'exercise' Thai sentences are naturally phrased and suitable for Text-to-Speech synthesis.
     10. Conciseness: Keep the lesson content concise and focused.
   `;
@@ -180,74 +190,84 @@ export async function generateThaiLesson(
   return JSON.parse(text) as ThaiLesson;
 }
 
-export async function generateImage(
-  prompt: string,
-  keyIndex: number = 1
-): Promise<string | null> {
+// ============================================================
+// 图片生成（Hugging Face FLUX.1-schnell）
+// 完全免费，不消耗 Gemini 额度
+// ============================================================
+
+export async function generateImage(prompt: string): Promise<string | null> {
+  const hfToken = getHuggingFaceToken();
+
+  if (!hfToken) {
+    console.warn("[IMG] No Hugging Face token found. Set VITE_HF_TOKEN in Vercel.");
+    return null;
+  }
+
   try {
-    const ai = getAIInstance(keyIndex);
+    console.log("[IMG] Calling Hugging Face FLUX.1-schnell...");
 
-    console.log("[IMG] Using Key:", keyIndex);
-    console.log("[IMG] Prompt:", prompt.substring(0, 60));
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-image",
-      contents: prompt,
-      config: {
-        responseModalities: ["TEXT", "IMAGE"],
+    const response = await fetch(
+      "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${hfToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          inputs: prompt,
+          parameters: {
+            num_inference_steps: 4,  // schnell 只需 4 步，速度快
+            width: 512,
+            height: 512,
+          }
+        }),
       }
-    });
+    );
 
-    const candidates = response.candidates;
-    console.log("[IMG] candidates count:", candidates?.length);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("[IMG] HF API error:", response.status, errorText);
 
-    const parts = candidates?.[0]?.content?.parts;
-    console.log("[IMG] parts count:", parts?.length);
-
-    if (parts) {
-      parts.forEach((part: any, i: number) => {
-        console.log(`[IMG] part[${i}] keys:`, Object.keys(part));
-        if (part.inlineData) {
-          console.log(`[IMG] part[${i}] mimeType:`, part.inlineData.mimeType);
-          console.log(`[IMG] part[${i}] data length:`, part.inlineData.data?.length);
-        }
-        if (part.text) {
-          console.log(`[IMG] part[${i}] text:`, part.text.substring(0, 80));
-        }
-      });
-
-      for (const part of parts) {
-        if (part.inlineData?.data) {
-          console.log("[IMG] ✅ Image data found!");
-          return `data:image/png;base64,${part.inlineData.data}`;
-        }
+      // 模型正在加载（冷启动），返回 null 跳过图片
+      if (response.status === 503) {
+        console.warn("[IMG] Model is loading, skipping image for now.");
+        return null;
       }
+      // 额度超限
+      if (response.status === 429) {
+        console.warn("[IMG] HF rate limit exceeded.");
+        return "QUOTA_EXCEEDED";
+      }
+      return null;
     }
 
-    console.warn("[IMG] ⚠️ No image data found in response");
-    return null;
+    // 返回的是二进制图片数据
+    const blob = await response.blob();
+    const base64 = await blobToBase64(blob);
+    console.log("[IMG] ✅ Image generated successfully via Hugging Face!");
+    return base64;
 
   } catch (e: any) {
-    console.error("[IMG] ❌ Error:", {
-      message: e?.message,
-      status: e?.status,
-      code: e?.code,
-    });
-    const status = e?.status || e?.code || 0;
-    const message = e?.message || "";
-    if (status === 429 || message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
-      console.warn("[IMG] Quota exceeded (429) on Key", keyIndex);
-      return "QUOTA_EXCEEDED";
-    } else if (status === 403 || message.includes('403')) {
-      console.warn("[IMG] Permission denied (403) on Key", keyIndex);
-    } else if (status === 404 || message.includes('404')) {
-      console.warn("[IMG] Model not found (404)");
-    }
+    console.error("[IMG] ❌ Fetch error:", e?.message);
     return null;
   }
 }
 
-// 浏览器原生 Web Speech API 播放泰语
+// Blob 转 base64 data URL
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// ============================================================
+// 语音播放（浏览器原生 Web Speech API）
+// ============================================================
+
 export function speakThai(text: string): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!window.speechSynthesis) {
