@@ -27,10 +27,6 @@ function getGeminiApiKey(keyIndex: number = 1): string {
   return keys[keyIndex] || keys[1] || "";
 }
 
-function getHuggingFaceToken(): string {
-  return (import.meta as any).env?.VITE_HF_TOKEN || "";
-}
-
 function getGeminiInstance(keyIndex: number = 1) {
   const apiKey = getGeminiApiKey(keyIndex);
   return new GoogleGenAI({ apiKey });
@@ -92,7 +88,7 @@ export async function generateThaiLesson(
          * 'audioText': The TRADITIONAL FULL NAME of the character for accurate pronunciation (e.g., 'ก ไก่' for ก, 'ฝ ฝา' for ฝ). THIS IS CRITICAL for single characters.
     6. Language: Use ${profile.auxiliaryLanguage} for all explanations, translations, and instructions.
     7. Formatting: Return the response in JSON format according to the specified schema.
-    8. Vocabulary Image Prompts: For each vocabulary word/character, provide a highly detailed 'imagePrompt' (scenic, high-quality, 3D render or professional photo style) reflecting the meaning or a mnemonic for the character in a Thai context. Write prompts in English only.
+    8. Vocabulary Image Prompts: For each vocabulary word/character, provide a highly detailed 'imagePrompt' in English (scenic, high-quality, 3D render or professional photo style) reflecting the meaning or a mnemonic for the character in a Thai context.
     9. Pronunciation: Ensure 'content' and 'exercise' Thai sentences are naturally phrased and suitable for Text-to-Speech synthesis.
     10. Conciseness: Keep the lesson content concise and focused.
   `;
@@ -191,77 +187,49 @@ export async function generateThaiLesson(
 }
 
 // ============================================================
-// 图片生成（Hugging Face FLUX.1-schnell）
-// 完全免费，不消耗 Gemini 额度
+// 图片生成
+// 通过自己的 Vercel 服务器端 API 调用 Hugging Face
+// 避免 CORS 问题，HF Token 保存在服务器端不暴露给前端
 // ============================================================
 
 export async function generateImage(prompt: string): Promise<string | null> {
-  const hfToken = getHuggingFaceToken();
-
-  if (!hfToken) {
-    console.warn("[IMG] No Hugging Face token found. Set VITE_HF_TOKEN in Vercel.");
-    return null;
-  }
-
   try {
-    console.log("[IMG] Calling Hugging Face FLUX.1-schnell...");
+    console.log("[IMG] Requesting image via /api/generate-image...");
 
-    const response = await fetch(
-      "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${hfToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          inputs: prompt,
-          parameters: {
-            num_inference_steps: 4,  // schnell 只需 4 步，速度快
-            width: 512,
-            height: 512,
-          }
-        }),
-      }
-    );
+    const response = await fetch('/api/generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("[IMG] HF API error:", response.status, errorText);
+      const errorData = await response.json().catch(() => ({}));
+      console.error("[IMG] API error:", response.status, errorData);
 
-      // 模型正在加载（冷启动），返回 null 跳过图片
-      if (response.status === 503) {
-        console.warn("[IMG] Model is loading, skipping image for now.");
-        return null;
-      }
-      // 额度超限
       if (response.status === 429) {
-        console.warn("[IMG] HF rate limit exceeded.");
         return "QUOTA_EXCEEDED";
+      }
+      if (response.status === 503) {
+        // 模型冷启动，跳过图片
+        console.warn("[IMG] Model is loading, skipping image.");
+        return null;
       }
       return null;
     }
 
-    // 返回的是二进制图片数据
-    const blob = await response.blob();
-    const base64 = await blobToBase64(blob);
-    console.log("[IMG] ✅ Image generated successfully via Hugging Face!");
-    return base64;
+    const data = await response.json();
+    if (data.image) {
+      console.log("[IMG] ✅ Image received successfully!");
+      return data.image;
+    }
+
+    console.warn("[IMG] No image in response");
+    return null;
 
   } catch (e: any) {
-    console.error("[IMG] ❌ Fetch error:", e?.message);
+    console.error("[IMG] ❌ Error:", e?.message);
     return null;
   }
-}
-
-// Blob 转 base64 data URL
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
 }
 
 // ============================================================
