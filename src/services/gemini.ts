@@ -1,15 +1,43 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { UserProfile, ThaiLesson } from "../types";
 
-function getAIInstance() {
-  const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
+// 获取所有可用的 API Key
+export function getAvailableKeys(): { index: number; label: string; available: boolean }[] {
+  const keys = [
+    (import.meta as any).env?.VITE_GEMINI_API_KEY_1 || "",
+    (import.meta as any).env?.VITE_GEMINI_API_KEY_2 || "",
+    (import.meta as any).env?.VITE_GEMINI_API_KEY_3 || "",
+  ];
+  return keys.map((key, i) => ({
+    index: i + 1,
+    label: `Key ${i + 1}`,
+    available: !!key && key.length > 0,
+  }));
+}
+
+// 根据选择的 Key 编号获取对应的 Key 值
+function getApiKey(keyIndex: number = 1): string {
+  const keys: Record<number, string> = {
+    1: (import.meta as any).env?.VITE_GEMINI_API_KEY_1 || "",
+    2: (import.meta as any).env?.VITE_GEMINI_API_KEY_2 || "",
+    3: (import.meta as any).env?.VITE_GEMINI_API_KEY_3 || "",
+  };
+  return keys[keyIndex] || keys[1] || "";
+}
+
+function getAIInstance(keyIndex: number = 1) {
+  const apiKey = getApiKey(keyIndex);
   return new GoogleGenAI({ apiKey });
 }
 
-export async function generateThaiLesson(profile: UserProfile, lessonCount: number): Promise<ThaiLesson> {
+export async function generateThaiLesson(
+  profile: UserProfile,
+  lessonCount: number,
+  keyIndex: number = 1
+): Promise<ThaiLesson> {
   const isKid = profile.age === 'primary' || profile.age === 'middle' || (typeof profile.age === 'number' && profile.age < 12);
-  const ai = getAIInstance();
-  
+  const ai = getAIInstance(keyIndex);
+
   const systemInstruction = `
     You are an expert Thai language teacher. 
     Task: Generate a creative Thai language lesson.
@@ -152,13 +180,14 @@ export async function generateThaiLesson(profile: UserProfile, lessonCount: numb
   return JSON.parse(text) as ThaiLesson;
 }
 
-export async function generateImage(prompt: string): Promise<string | null> {
+export async function generateImage(
+  prompt: string,
+  keyIndex: number = 1
+): Promise<string | null> {
   try {
-    const ai = getAIInstance();
+    const ai = getAIInstance(keyIndex);
 
-    // ===== 调试日志 =====
-    const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
-    console.log("[IMG] API Key exists:", !!apiKey, "| length:", apiKey.length);
+    console.log("[IMG] Using Key:", keyIndex);
     console.log("[IMG] Prompt:", prompt.substring(0, 60));
 
     const response = await ai.models.generateContent({
@@ -207,10 +236,10 @@ export async function generateImage(prompt: string): Promise<string | null> {
     const status = e?.status || e?.code || 0;
     const message = e?.message || "";
     if (status === 429 || message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
-      console.warn("[IMG] Quota exceeded (429)");
+      console.warn("[IMG] Quota exceeded (429) on Key", keyIndex);
       return "QUOTA_EXCEEDED";
     } else if (status === 403 || message.includes('403')) {
-      console.warn("[IMG] Permission denied (403)");
+      console.warn("[IMG] Permission denied (403) on Key", keyIndex);
     } else if (status === 404 || message.includes('404')) {
       console.warn("[IMG] Model not found (404)");
     }
