@@ -157,7 +157,7 @@ export async function generateImage(prompt: string): Promise<string | null> {
   try {
     const ai = getAIInstance();
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash-preview-image-generation", // ✅ 修正：使用正确的图片生成模型名
+      model: "gemini-2.5-flash-image", // ✅ 修正：使用正确的图片生成模型名
       contents: prompt,
       config: {
         responseModalities: ["TEXT", "IMAGE"],
