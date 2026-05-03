@@ -155,6 +155,12 @@ export async function generateThaiLesson(profile: UserProfile, lessonCount: numb
 export async function generateImage(prompt: string): Promise<string | null> {
   try {
     const ai = getAIInstance();
+
+    // ===== 调试日志 =====
+    const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
+    console.log("[IMG] API Key exists:", !!apiKey, "| length:", apiKey.length);
+    console.log("[IMG] Prompt:", prompt.substring(0, 60));
+
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-image",
       contents: prompt,
@@ -163,28 +169,50 @@ export async function generateImage(prompt: string): Promise<string | null> {
       }
     });
 
-    // 参照官方文档的正确提取方式
-    const parts = response.candidates?.[0]?.content?.parts;
+    const candidates = response.candidates;
+    console.log("[IMG] candidates count:", candidates?.length);
+
+    const parts = candidates?.[0]?.content?.parts;
+    console.log("[IMG] parts count:", parts?.length);
+
     if (parts) {
+      parts.forEach((part: any, i: number) => {
+        console.log(`[IMG] part[${i}] keys:`, Object.keys(part));
+        if (part.inlineData) {
+          console.log(`[IMG] part[${i}] mimeType:`, part.inlineData.mimeType);
+          console.log(`[IMG] part[${i}] data length:`, part.inlineData.data?.length);
+        }
+        if (part.text) {
+          console.log(`[IMG] part[${i}] text:`, part.text.substring(0, 80));
+        }
+      });
+
       for (const part of parts) {
         if (part.inlineData?.data) {
+          console.log("[IMG] ✅ Image data found!");
           return `data:image/png;base64,${part.inlineData.data}`;
         }
       }
     }
+
+    console.warn("[IMG] ⚠️ No image data found in response");
     return null;
+
   } catch (e: any) {
+    console.error("[IMG] ❌ Error:", {
+      message: e?.message,
+      status: e?.status,
+      code: e?.code,
+    });
     const status = e?.status || e?.code || 0;
     const message = e?.message || "";
     if (status === 429 || message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
-      console.warn("Image generation: Quota exceeded.");
+      console.warn("[IMG] Quota exceeded (429)");
       return "QUOTA_EXCEEDED";
     } else if (status === 403 || message.includes('403')) {
-      console.warn("Image generation: Permission denied (403).");
+      console.warn("[IMG] Permission denied (403)");
     } else if (status === 404 || message.includes('404')) {
-      console.warn("Image generation: Model not found (404).");
-    } else {
-      console.error("Image Generation Error", e);
+      console.warn("[IMG] Model not found (404)");
     }
     return null;
   }
