@@ -1,8 +1,9 @@
-import { GoogleGenAI, Type, Modality } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { UserProfile, ThaiLesson } from "../types";
 
 function getAIInstance() {
-  const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || "";
+  // 修正：Vite 项目必须用 import.meta.env，不能用 process.env
+  const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
   return new GoogleGenAI({ apiKey });
 }
 
@@ -55,7 +56,7 @@ export async function generateThaiLesson(profile: UserProfile, lessonCount: numb
     6. Language: Use ${profile.auxiliaryLanguage} for all explanations, translations, and instructions.
     7. Formatting: Return the response in JSON format according to the specified schema.
     8. Vocabulary Image Prompts: For each vocabulary word/character, provide a highly detailed 'imagePrompt' (scenic, high-quality, 3D render or professional photo style) reflecting the meaning or a mnemonic for the character in a Thai context.
-    9. Pronunciation: Ensure 'content' and 'exercise' Thai sentences are naturally phrased and suitable for high-quality Text-to-Speech synthesis.
+    9. Pronunciation: Ensure 'content' and 'exercise' Thai sentences are naturally phrased and suitable for Text-to-Speech synthesis.
     10. Conciseness: Keep the lesson content concise and focused.
   `;
 
@@ -69,7 +70,7 @@ export async function generateThaiLesson(profile: UserProfile, lessonCount: numb
     `;
 
   const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-2.5-flash",  // ✅ 修正：原来是假模型名 gemini-3-flash-preview
     contents: prompt,
     config: {
       systemInstruction,
@@ -153,74 +154,80 @@ export async function generateThaiLesson(profile: UserProfile, lessonCount: numb
 }
 
 export async function generateImage(prompt: string): Promise<string | null> {
-  const models = ['gemini-2.5-flash-image', 'gemini-3.1-flash-image-preview'];
-  
-  for (const model of models) {
-    try {
-      const ai = getAIInstance();
-      const response = await ai.models.generateContent({
-        model,
-        contents: { parts: [{ text: prompt }] },
-        config: {
-          imageConfig: {
-            aspectRatio: "1:1"
-          }
-        }
-      });
-      
-      const candidates = response.candidates;
-      if (candidates && candidates[0] && candidates[0].content && candidates[0].content.parts) {
-        for (const part of candidates[0].content.parts) {
-          if (part.inlineData) {
-            return `data:image/png;base64,${part.inlineData.data}`;
-          }
-        }
-      }
-    } catch (e: any) {
-      const status = e?.status || e?.code || 0;
-      const message = e?.message || "";
-      
-      if (status === 429 || message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
-        console.warn(`Image generation (model: ${model}): Quota exceeded (429).`);
-        return "QUOTA_EXCEEDED"; 
-      } else if (status === 403 || message.includes('403')) {
-        console.warn(`Image generation (model: ${model}): Permission denied (403).`);
-      } else if (status === 404 || message.includes('404')) {
-        console.warn(`Image generation (model: ${model}): Not found (404).`);
-      } else {
-        console.error(`Image Generation Error (${model})`, e);
-      }
-    }
-  }
-  return null;
-}
-
-export async function generateAudio(text: string): Promise<string | null> {
   try {
     const ai = getAIInstance();
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-tts-preview",
-      contents: [{ role: 'user', parts: [{ text: `Read this Thai text clearly: ${text}` }] }],
+      model: "gemini-2.0-flash-preview-image-generation", // ✅ 修正：使用正确的图片生成模型名
+      contents: prompt,
       config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: 'Kore' },
-          },
-        },
-      },
+        responseModalities: ["TEXT", "IMAGE"],
+      }
     });
 
     const candidates = response.candidates;
-    return candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
+    if (candidates && candidates[0]?.content?.parts) {
+      for (const part of candidates[0].content.parts) {
+        if (part.inlineData?.data) {
+          return `data:image/png;base64,${part.inlineData.data}`;
+        }
+      }
+    }
+    return null;
   } catch (e: any) {
     const status = e?.status || e?.code || 0;
     const message = e?.message || "";
+
     if (status === 429 || message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
-      console.warn("TTS Quota exceeded (429).");
+      console.warn("Image generation: Quota exceeded (429).");
       return "QUOTA_EXCEEDED";
+    } else if (status === 403 || message.includes('403')) {
+      console.warn("Image generation: Permission denied (403).");
+    } else if (status === 404 || message.includes('404')) {
+      console.warn("Image generation: Model not found (404).");
+    } else {
+      console.error("Image Generation Error", e);
     }
-    console.error("TTS Error", e);
+    return null;
+  }
+}
+
+// ✅ 修正：用浏览器原生 Web Speech API 代替 Gemini TTS
+// 好处：完全免费、无配额限制、泰语支持良好
+export function speakThai(text: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!window.speechSynthesis) {
+      reject(new Error("Web Speech API not supported"));
+      return;
+    }
+
+    // 停止当前正在播放的语音
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "th-TH"; // 泰语
+    utterance.rate = 0.85;    // 稍慢，适合学习
+    utterance.pitch = 1.0;
+
+    // 优先选择泰语语音，如果没有则用默认语音
+    const voices = window.speechSynthesis.getVoices();
+    const thaiVoice = voices.find(v => v.lang.startsWith("th"));
+    if (thaiVoice) utterance.voice = thaiVoice;
+
+    utterance.onend = () => resolve();
+    utterance.onerror = (e) => reject(e);
+
+    window.speechSynthesis.speak(utterance);
+  });
+}
+
+// 保留 generateAudio 名字作为兼容接口，内部用 Web Speech API
+// 返回 null 表示不需要base64数据（Web Speech API直接播放）
+export async function generateAudio(text: string): Promise<string | null> {
+  try {
+    await speakThai(text);
+    return "WEB_SPEECH_PLAYED"; // 标记已播放
+  } catch (e) {
+    console.error("Web Speech API error:", e);
     return null;
   }
 }
