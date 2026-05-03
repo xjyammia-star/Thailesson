@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     define: {
-      // 支持3个 API Key，在界面中手动切换
+      // Gemini API Keys（文字课程生成用）
       'import.meta.env.VITE_GEMINI_API_KEY_1': JSON.stringify(
         env.VITE_GEMINI_API_KEY_1 || env.VITE_GEMINI_API_KEY || env.GEMINI_API_KEY || ""
       ),
@@ -18,6 +18,10 @@ export default defineConfig(({ mode }) => {
       ),
       'import.meta.env.VITE_GEMINI_API_KEY_3': JSON.stringify(
         env.VITE_GEMINI_API_KEY_3 || ""
+      ),
+      // Hugging Face Token（图片生成用，完全独立不消耗 Gemini 额度）
+      'import.meta.env.VITE_HF_TOKEN': JSON.stringify(
+        env.VITE_HF_TOKEN || ""
       ),
       // 兼容旧写法
       'process.env.GEMINI_API_KEY': JSON.stringify(
