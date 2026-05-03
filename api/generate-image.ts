@@ -1,10 +1,7 @@
 // api/generate-image.ts
-// 这个文件运行在 Vercel 服务器端，不在浏览器里
-// 所以不会有 CORS 问题，可以自由调用 Hugging Face API
+// Vercel Serverless Function - 服务器端运行，解决 CORS 问题
 
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: any, res: any) {
   // 只允许 POST 请求
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -17,7 +14,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // HF Token 从服务器环境变量读取，不暴露给前端
-  const hfToken = process.env.HF_TOKEN || process.env.VITE_HF_TOKEN || "";
+  const hfToken = process.env.HF_TOKEN || "";
 
   if (!hfToken) {
     console.error("[API] No HF_TOKEN found in environment variables");
@@ -51,7 +48,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.error("[API] HF error:", response.status, errorText);
 
       if (response.status === 503) {
-        // 模型冷启动中，告诉前端跳过
         return res.status(503).json({ error: 'Model loading' });
       }
       if (response.status === 429) {
