@@ -19,16 +19,16 @@ import {
   User,
   Gamepad2,
   ArrowLeft,
-  Home
+  Home,
+  Key
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
-// ✅ 修正：删除重复的 Firebase import（原来第27-29行），只保留下面这一行
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db, auth } from './lib/firebase';
 import { UserProfile, ThaiLesson, Difficulty, LearningFocus, AuxiliaryLanguage, Achievement, AppAchievement } from './types';
-import { generateThaiLesson, generateImage, speakThai } from './services/gemini';
+import { generateThaiLesson, generateImage, speakThai, getAvailableKeys } from './services/gemini';
 
 const APP_ACHIEVEMENTS: AppAchievement[] = [
   {
@@ -195,27 +195,36 @@ export default function App() {
   const [lessonCount, setLessonCount] = useState(0);
   const [loadingText, setLoadingText] = useState('');
   const [error, setError] = useState<string | null>(null);
-  // ✅ 修正：不再需要 audioData (base64缓存)，Web Speech API 直接播放
   const [loadingAudio, setLoadingAudio] = useState<string | null>(null);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [showResults, setShowResults] = useState(false);
   const [showExerciseTranslations, setShowExerciseTranslations] = useState<Record<number, boolean>>({});
-  const [unlockedAchievements, setUnlockedAchievements] = useState<string[]>([]);
   const [museumLang, setMuseumLang] = useState<AuxiliaryLanguage>('zh');
   const [hasApiKey, setHasApiKey] = useState(true);
+
+  // ✅ 新增：当前选择的 API Key 编号（1/2/3），保存到 localStorage
+  const [selectedKeyIndex, setSelectedKeyIndex] = useState<number>(() => {
+    const saved = localStorage.getItem('sawasdee_key_index');
+    return saved ? parseInt(saved) : 1;
+  });
+
+  const availableKeys = getAvailableKeys();
+
+  const handleKeySelect = (index: number) => {
+    setSelectedKeyIndex(index);
+    localStorage.setItem('sawasdee_key_index', String(index));
+  };
 
   const profileRef = useRef(profile);
   useEffect(() => { profileRef.current = profile; }, [profile]);
 
-  // Auth and Firebase Sync
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
         const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
         const today = new Date().toLocaleDateString();
-        
         if (userDoc.exists()) {
           const cloudData = userDoc.data() as UserProfile;
           if (cloudData.lastLessonDate !== today) {
@@ -284,7 +293,8 @@ export default function App() {
     
     try {
       const nextCount = isNext ? lessonCount + 1 : 1;
-      const generatedLesson = await generateThaiLesson(profile, nextCount);
+      // ✅ 传入选择的 Key 编号
+      const generatedLesson = await generateThaiLesson(profile, nextCount, selectedKeyIndex);
       
       setLoadingText(currentT.loadingImages);
       
@@ -292,11 +302,9 @@ export default function App() {
       let quotaExceeded = false;
 
       const imagesToGenerate: { prompt: string, callback: (url: string) => void }[] = [];
-      
       limitedVocab.forEach(v => {
         imagesToGenerate.push({ prompt: v.imagePrompt, callback: (url) => { v.imageUrl = url; } });
       });
-
       generatedLesson.exercise.forEach(ex => {
         if (ex.question.imagePrompt) {
           imagesToGenerate.push({ prompt: ex.question.imagePrompt, callback: (url) => { ex.question.imageUrl = url; } });
@@ -306,7 +314,8 @@ export default function App() {
       for (const item of imagesToGenerate) {
         if (quotaExceeded) break;
         try {
-          const imageUrl = await generateImage(item.prompt);
+          // ✅ 传入选择的 Key 编号
+          const imageUrl = await generateImage(item.prompt, selectedKeyIndex);
           if (imageUrl === "QUOTA_EXCEEDED") {
             quotaExceeded = true;
           } else if (imageUrl) {
@@ -314,7 +323,7 @@ export default function App() {
           }
           await new Promise(resolve => setTimeout(resolve, 1200));
         } catch (e) {
-          console.warn("Failed to generate image for prompt:", item.prompt, e);
+          console.warn("Failed to generate image:", e);
         }
       }
 
@@ -345,9 +354,7 @@ export default function App() {
     if (!lesson) return 0;
     let correct = 0;
     lesson.exercise.forEach((ex, idx) => {
-      if (answers[idx]?.toLowerCase() === ex.answer.toLowerCase()) {
-        correct++;
-      }
+      if (answers[idx]?.toLowerCase() === ex.answer.toLowerCase()) correct++;
     });
     return (correct / lesson.exercise.length) * 100;
   };
@@ -368,45 +375,32 @@ export default function App() {
     return Math.round(base * pointsMultiplier);
   };
 
-  // ✅ 修正：playAudio 改用 Web Speech API，删除原来复杂的 base64 + AudioContext 逻辑
   const playAudio = async (text: string, speakText?: string) => {
     setAudioError(null);
     const textToSpeak = speakText || text;
-    
     if (!window.speechSynthesis) {
       setAudioError(currentT.audioError);
       return;
     }
-
     try {
       setLoadingAudio(text);
-      
-      // 等待语音列表加载（某些浏览器需要）
       await new Promise<void>((resolve) => {
         const voices = window.speechSynthesis.getVoices();
-        if (voices.length > 0) {
-          resolve();
-        } else {
+        if (voices.length > 0) resolve();
+        else {
           window.speechSynthesis.onvoiceschanged = () => resolve();
-          setTimeout(resolve, 500); // 最多等500ms
+          setTimeout(resolve, 500);
         }
       });
-
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(textToSpeak);
       utterance.lang = 'th-TH';
       utterance.rate = 0.85;
-      
       const voices = window.speechSynthesis.getVoices();
       const thaiVoice = voices.find(v => v.lang.startsWith('th'));
       if (thaiVoice) utterance.voice = thaiVoice;
-
       utterance.onend = () => setLoadingAudio(null);
-      utterance.onerror = () => {
-        setLoadingAudio(null);
-        setAudioError(currentT.playbackError);
-      };
-
+      utterance.onerror = () => { setLoadingAudio(null); setAudioError(currentT.playbackError); };
       window.speechSynthesis.speak(utterance);
     } catch (err) {
       setLoadingAudio(null);
@@ -420,31 +414,15 @@ export default function App() {
     const today = new Date().toLocaleDateString();
     const yesterday = new Date(Date.now() - 86400000).toLocaleDateString();
     const baseReward = Math.round((score / 10) * pointsMultiplier);
-    
-    let updatedProfile = {
-      ...profile,
-      lessonsCompletedToday: completed,
-      points: profile.points + baseReward
-    };
-
+    let updatedProfile = { ...profile, lessonsCompletedToday: completed, points: profile.points + baseReward };
     if (completed > 0 && completed % profile.dailyGoal === 0) {
       let newStreak = profile.streak;
       if (profile.lastGoalCompletionDate !== today) {
-        if (profile.lastGoalCompletionDate === yesterday) {
-          newStreak += 1;
-        } else {
-          newStreak = 1;
-        }
+        newStreak = profile.lastGoalCompletionDate === yesterday ? newStreak + 1 : 1;
       }
       const goalBonus = calculatePointsReward(profile.dailyGoal, newStreak > 1 && profile.dailyGoal === 10);
-      updatedProfile = {
-        ...updatedProfile,
-        points: updatedProfile.points + goalBonus,
-        streak: newStreak,
-        lastGoalCompletionDate: today
-      };
+      updatedProfile = { ...updatedProfile, points: updatedProfile.points + goalBonus, streak: newStreak, lastGoalCompletionDate: today };
     }
-    
     await saveProfile(updatedProfile);
     setShowResults(true);
   };
@@ -474,6 +452,7 @@ export default function App() {
       museum: '成就馆',
       museumTitle: '成就博物馆',
       locked: '未解锁',
+      apiKeyLabel: 'API Key 选择',
       levels: { Foundations: '入门 (发音/字母)', Elementary: '初级 (基础词汇)', Intermediate: '中级 (日常对话)', Advanced: '高级 (地道表达)' },
       focuses: { Listening: '听力', Speaking: '口语', Reading: '阅读', Writing: '写作', Comprehensive: '综合' },
       focusDescriptions: {
@@ -500,7 +479,7 @@ export default function App() {
       culturalNote: '文化小贴士',
       progress: '学习进度',
       milestone: (completed: number) => `你已经完成了 ${completed} 个课时。距离下一个里程碑还有 ${10 - (completed % 10)} 课！`,
-      quotaError: '图像生成配额已用完。本课将不带图片显示。您可以明天再试，或更换 API Key。',
+      quotaError: '图像生成配额已用完。本课将不带图片显示。请切换到其他 Key 重试。',
       audioError: '语音服务暂时不可用，请稍后再试。',
       playbackError: '播放失败，请重试。',
       museumDesc: '这里展示了你通过辛勤学习解锁的泰式珍宝。',
@@ -541,6 +520,7 @@ export default function App() {
       museum: 'Museum',
       museumTitle: 'Museum of Achievements',
       locked: 'Locked',
+      apiKeyLabel: 'API Key',
       levels: { Foundations: 'Foundations (Alphabet)', Elementary: 'Elementary (Words)', Intermediate: 'Intermediate (Conversations)', Advanced: 'Advanced (Fluent)' },
       focuses: { Listening: 'Listening', Speaking: 'Speaking', Reading: 'Reading', Writing: 'Writing', Comprehensive: 'Comprehensive' },
       focusDescriptions: {
@@ -567,8 +547,8 @@ export default function App() {
       culturalNote: 'Cultural Note',
       progress: 'Your Progress',
       milestone: (completed: number) => `You have completed ${completed} lessons. ${10 - (completed % 10)} more to the next milestone!`,
-      quotaError: 'Image generation quota exceeded. This lesson will show without images.',
-      audioError: 'Voice service temporarily unavailable. Please try again later.',
+      quotaError: 'Image quota exceeded. Please switch to another Key and retry.',
+      audioError: 'Voice service temporarily unavailable.',
       playbackError: 'Playback failed, please try again.',
       museumDesc: 'Treasures of Thailand unlocked through your dedication.',
       balance: 'Available Balance',
@@ -608,6 +588,7 @@ export default function App() {
       museum: 'พิพิธภัณฑ์',
       museumTitle: 'พิพิธภัณฑ์ความสำเร็จ',
       locked: 'ล็อกอยู่',
+      apiKeyLabel: 'API Key',
       levels: { Foundations: 'ระดับพื้้นฐาน (อักษร)', Elementary: 'ระดับเริ่มต้น (คำศัพท์)', Intermediate: 'ระดับกลาง (บทสนทนา)', Advanced: 'ระดับสูง (คล่องแคล่ว)' },
       focuses: { Listening: 'การฟัง', Speaking: 'การพูด', Reading: 'การอ่าน', Writing: 'การเขียน', Comprehensive: 'ครอบคลุม' },
       focusDescriptions: {
@@ -634,8 +615,8 @@ export default function App() {
       culturalNote: 'บันทึกทางวัฒนธรรม',
       progress: 'ความก้าวหน้าของคุณ',
       milestone: (completed: number) => `คุณเรียนจบไปแล้ว ${completed} บทเรียน อีก ${10 - (completed % 10)} บทเรียนจะถึงจุดหมายถัดไป!`,
-      quotaError: 'โควตาการสร้างรูปภาพหมดแล้ว บทเรียนนี้จะแสดงโดยไม่มีรูปภาพ',
-      audioError: 'บริการเสียงไม่พร้อมใช้งานชั่วคราว โปรดลองอีกครั้งในภายหลัง',
+      quotaError: 'โควตาหมดแล้ว กรุณาเปลี่ยน Key แล้วลองใหม่',
+      audioError: 'บริการเสียงไม่พร้อมใช้งานชั่วคราว',
       playbackError: 'การเล่นล้มเหลว โปรดลองอีกครั้ง',
       museumDesc: 'ขุมทรัพย์แห่งประเทศไทยที่ปลดล็อกด้วยความทุ่มเทของคุณ',
       balance: 'ยอดคงเหลือ',
@@ -665,11 +646,7 @@ export default function App() {
     const handleBuy = async (ach: AppAchievement) => {
       if (profile.points >= ach.price && !profile.unlockedAchievements.includes(ach.id)) {
         setBuyingId(ach.id);
-        const updated = {
-          ...profile,
-          points: profile.points - ach.price,
-          unlockedAchievements: [...profile.unlockedAchievements, ach.id]
-        };
+        const updated = { ...profile, points: profile.points - ach.price, unlockedAchievements: [...profile.unlockedAchievements, ach.id] };
         await saveProfile(updated);
         setBuyingId(null);
       }
@@ -687,9 +664,7 @@ export default function App() {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
           <div className="space-y-3">
             <div className="flex items-center gap-4">
-              <button onClick={() => setStep('setup')} className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl shadow-lg transition-all text-slate-300 border border-white/5">
-                <ArrowLeft size={24} />
-              </button>
+              <button onClick={() => setStep('setup')} className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl shadow-lg transition-all text-slate-300 border border-white/5"><ArrowLeft size={24} /></button>
               <div>
                 <h2 className="text-4xl font-display font-black text-white tracking-tight uppercase">{museumT.museumTitle}</h2>
                 <p className="text-slate-400 font-medium">{museumT.museumDesc}</p>
@@ -698,9 +673,7 @@ export default function App() {
           </div>
           <div className="flex flex-col items-end gap-3">
             <div className="bg-thai-blue px-6 py-4 rounded-[2rem] shadow-xl border border-white/5 flex items-center gap-4">
-              <div className="w-12 h-12 bg-thai-gold/10 rounded-2xl flex items-center justify-center text-thai-gold shadow-inner">
-                <Sparkles size={28} fill="currentColor" />
-              </div>
+              <div className="w-12 h-12 bg-thai-gold/10 rounded-2xl flex items-center justify-center text-thai-gold shadow-inner"><Sparkles size={28} fill="currentColor" /></div>
               <div>
                 <p className="text-[10px] font-black uppercase text-slate-500 tracking-[0.2em] leading-none mb-2">{museumT.balance}</p>
                 <p className="text-2xl font-black text-white leading-none tracking-tight">✧ {profile.points.toLocaleString()}</p>
@@ -708,10 +681,7 @@ export default function App() {
             </div>
             <div className="flex gap-2">
               {(['zh', 'en', 'th'] as const).map(lang => (
-                <button key={lang} onClick={() => setMuseumLang(lang)}
-                  className={`px-5 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 ${museumLang === lang ? 'bg-thai-gold text-thai-navy scale-105' : 'bg-white/5 text-slate-400 border border-white/5 hover:border-white/20'}`}>
-                  {lang}
-                </button>
+                <button key={lang} onClick={() => setMuseumLang(lang)} className={`px-5 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 ${museumLang === lang ? 'bg-thai-gold text-thai-navy scale-105' : 'bg-white/5 text-slate-400 border border-white/5 hover:border-white/20'}`}>{lang}</button>
               ))}
             </div>
           </div>
@@ -725,22 +695,16 @@ export default function App() {
                 <circle cx="48" cy="48" r="40" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-white/5" />
                 <circle cx="48" cy="48" r="40" stroke="currentColor" strokeWidth="8" fill="transparent" strokeDasharray={251.2} strokeDashoffset={251.2 - (251.2 * Math.min(milestoneProgressPercent, 100)) / 100} strokeLinecap="round" className="text-thai-gold transition-all duration-1000" />
               </svg>
-              <div className="absolute inset-0 flex items-center justify-center flex-col">
-                <span className="text-xl font-black text-white">{unlockedCount}/{displayTarget}</span>
-              </div>
+              <div className="absolute inset-0 flex items-center justify-center flex-col"><span className="text-xl font-black text-white">{unlockedCount}/{displayTarget}</span></div>
             </div>
             <div className="flex-1 text-center md:text-left">
               <h3 className="text-xl font-black text-white mb-1">{museumT.discoveryTitle}</h3>
-              <p className="text-slate-400 font-medium leading-relaxed">
-                {museumT.discoveryProgress(unlockedCount, displayTarget, pointsMultiplier.toFixed(2))}
-              </p>
+              <p className="text-slate-400 font-medium leading-relaxed">{museumT.discoveryProgress(unlockedCount, displayTarget, pointsMultiplier.toFixed(2))}</p>
               {unlockedCount >= 5 && (
                 <div className="mt-4 flex flex-col sm:flex-row gap-3">
                   <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all ${unlockedCount >= 9 ? 'bg-thai-gold/20 border-thai-gold/30 text-thai-gold' : 'bg-white/5 border-white/5 text-slate-500'}`}>
                     <span className={`w-2 h-2 rounded-full ${unlockedCount >= 9 ? 'bg-thai-gold animate-pulse' : 'bg-slate-700'}`} />
-                    <span className="text-[10px] font-black uppercase tracking-wider">
-                      {unlockedCount >= 10 ? museumT.rewardRoyal : unlockedCount >= 9 ? museumT.rewardExpert : museumT.rewardExploring}
-                    </span>
+                    <span className="text-[10px] font-black uppercase tracking-wider">{unlockedCount >= 10 ? museumT.rewardRoyal : unlockedCount >= 9 ? museumT.rewardExpert : museumT.rewardExploring}</span>
                   </div>
                   {unlockedCount >= 5 && unlockedCount < 9 && (
                     <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-thai-blue/50 rounded-xl border border-thai-gold/20 text-thai-gold/80">
@@ -758,28 +722,13 @@ export default function App() {
           {APP_ACHIEVEMENTS.map((ach, idx) => {
             const unlocked = profile.unlockedAchievements.includes(ach.id);
             const canAfford = profile.points >= ach.price;
-            const getTierColor = () => {
-              if (idx < 3) return 'border-blue-500/20 bg-blue-500/10 text-blue-400';
-              if (idx < 6) return 'border-teal-500/20 bg-teal-500/10 text-teal-400';
-              if (idx < 9) return 'border-amber-500/20 bg-amber-500/10 text-amber-400';
-              return 'border-rose-500/20 bg-rose-500/10 text-rose-400';
-            };
-            const getRegionName = () => {
-              if (idx < 3) return museumT.regions.exploring;
-              if (idx < 6) return museumT.regions.southern;
-              if (idx < 9) return museumT.regions.northern;
-              return museumT.regions.ultimate;
-            };
+            const getTierColor = () => { if (idx < 3) return 'border-blue-500/20 bg-blue-500/10 text-blue-400'; if (idx < 6) return 'border-teal-500/20 bg-teal-500/10 text-teal-400'; if (idx < 9) return 'border-amber-500/20 bg-amber-500/10 text-amber-400'; return 'border-rose-500/20 bg-rose-500/10 text-rose-400'; };
+            const getRegionName = () => { if (idx < 3) return museumT.regions.exploring; if (idx < 6) return museumT.regions.southern; if (idx < 9) return museumT.regions.northern; return museumT.regions.ultimate; };
             return (
-              <motion.div key={ach.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05 }}
-                className={`group relative overflow-hidden rounded-[2.25rem] border-2 transition-all p-6 flex flex-col gap-5 ${unlocked ? 'bg-thai-blue border-white/5 shadow-xl shadow-black/20 hover:shadow-2xl hover:shadow-black/30 hover:-translate-y-1' : 'bg-white/5 border-white/5 grayscale-[0.8] opacity-80'}`}>
+              <motion.div key={ach.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05 }} className={`group relative overflow-hidden rounded-[2.25rem] border-2 transition-all p-6 flex flex-col gap-5 ${unlocked ? 'bg-thai-blue border-white/5 shadow-xl shadow-black/20 hover:shadow-2xl hover:shadow-black/30 hover:-translate-y-1' : 'bg-white/5 border-white/5 grayscale-[0.8] opacity-80'}`}>
                 <div className="flex justify-between items-start">
                   <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${getTierColor()}`}>{getRegionName()}</span>
-                  {!unlocked && (
-                    <div className="flex items-center gap-1.5 px-3 py-1 bg-white/5 backdrop-blur rounded-full text-[10px] font-black text-slate-400 shadow-sm border border-white/5">
-                      ✧ {ach.price.toLocaleString()}
-                    </div>
-                  )}
+                  {!unlocked && <div className="flex items-center gap-1.5 px-3 py-1 bg-white/5 backdrop-blur rounded-full text-[10px] font-black text-slate-400 shadow-sm border border-white/5">✧ {ach.price.toLocaleString()}</div>}
                 </div>
                 <div className="relative w-full aspect-square rounded-3xl overflow-hidden bg-white/5 shadow-inner">
                   {unlocked ? (
@@ -792,17 +741,13 @@ export default function App() {
                       <img src={`https://api.dicebear.com/7.x/shapes/svg?seed=${ach.id}-province&backgroundColor=0b1120`} alt={ach.province[museumLang]} className="w-full h-full object-cover p-12 opacity-30 blur-[2px]" />
                       <div className="absolute inset-0 flex flex-col items-center justify-center">
                         <Sparkles size={48} className="opacity-10 mb-3 animate-pulse" />
-                        <p className="text-[10px] font-display font-black uppercase tracking-[0.3em]">
-                          {museumLang === 'zh' ? '尚未探索' : museumLang === 'th' ? 'ซ่อนอยู่' : 'Landmark Hidden'}
-                        </p>
+                        <p className="text-[10px] font-display font-black uppercase tracking-[0.3em]">{museumLang === 'zh' ? '尚未探索' : museumLang === 'th' ? 'ซ่อนอยู่' : 'Landmark Hidden'}</p>
                       </div>
                     </div>
                   )}
                 </div>
                 <div className="flex-1 flex flex-col gap-3">
-                  <h3 className={`text-xl font-display font-black tracking-tight ${unlocked ? 'text-white' : 'text-slate-500'}`}>
-                    {unlocked ? ach.specialty[museumLang] : ach.province[museumLang]}
-                  </h3>
+                  <h3 className={`text-xl font-display font-black tracking-tight ${unlocked ? 'text-white' : 'text-slate-500'}`}>{unlocked ? ach.specialty[museumLang] : ach.province[museumLang]}</h3>
                   <div className="min-h-[4.5rem]">
                     <p className={`text-sm leading-relaxed font-body ${unlocked ? 'text-slate-300' : 'text-slate-600 italic font-medium'}`}>
                       {unlocked ? ach.description[museumLang] : (museumLang === 'zh' ? `解锁以探索 ${ach.province[museumLang]} 府的神秘古迹、地域特产和文化加成。` : museumLang === 'th' ? `ปลดล็อกเพื่อสำรวจมรดกลึกลับและของดีประจำจังหวัด${ach.province[museumLang]}` : `Unlock to discover the hidden heritage and cultural specialties of ${ach.province[museumLang]}.`)}
@@ -810,15 +755,11 @@ export default function App() {
                   </div>
                   {unlocked ? (
                     <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-green-400">
-                        <div className="w-6 h-6 rounded-lg bg-green-400/10 flex items-center justify-center"><CheckCircle2 size={14} /></div>
-                        <span className="text-[10px] font-display font-black uppercase tracking-widest">{museumLang === 'zh' ? '已解锁' : museumLang === 'th' ? 'ปลดล็อกแล้ว' : 'Unlocked'}</span>
-                      </div>
+                      <div className="flex items-center gap-2 text-green-400"><div className="w-6 h-6 rounded-lg bg-green-400/10 flex items-center justify-center"><CheckCircle2 size={14} /></div><span className="text-[10px] font-display font-black uppercase tracking-widest">{museumLang === 'zh' ? '已解锁' : museumLang === 'th' ? 'ปลดล็อกแล้ว' : 'Unlocked'}</span></div>
                       <div className="text-[10px] font-display font-black text-thai-gold bg-thai-gold/10 px-3 py-1 rounded-lg border border-thai-gold/20">BUFF: x{ach.buff?.value.toFixed(2)}</div>
                     </div>
                   ) : (
-                    <button disabled={!canAfford || buyingId === ach.id} onClick={() => handleBuy(ach)}
-                      className={`mt-auto w-full py-4 rounded-2xl font-display font-black text-sm transition-all flex items-center justify-center gap-2 ${canAfford ? 'bg-thai-gold text-thai-navy hover:bg-white shadow-xl shadow-black/20 active:scale-95' : 'bg-white/10 text-slate-500 cursor-not-allowed border border-white/5'}`}>
+                    <button disabled={!canAfford || buyingId === ach.id} onClick={() => handleBuy(ach)} className={`mt-auto w-full py-4 rounded-2xl font-display font-black text-sm transition-all flex items-center justify-center gap-2 ${canAfford ? 'bg-thai-gold text-thai-navy hover:bg-white shadow-xl shadow-black/20 active:scale-95' : 'bg-white/10 text-slate-500 cursor-not-allowed border border-white/5'}`}>
                       {buyingId === ach.id ? <Loader2 className="animate-spin" size={20} /> : <><Sparkles size={18} fill={canAfford ? "currentColor" : "none"} />{museumT.unlockWith} ✧ {ach.price.toLocaleString()}</>}
                     </button>
                   )}
@@ -836,9 +777,7 @@ export default function App() {
       <header className="sticky top-0 z-50 bg-thai-navy/80 backdrop-blur-xl border-b border-white/5">
         <div className="max-w-5xl mx-auto px-4 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3 cursor-pointer group" onClick={() => setStep('setup')}>
-            <div className="w-10 h-10 bg-thai-gold rounded-xl flex items-center justify-center shadow-lg shadow-thai-gold/20 group-hover:scale-110 transition-transform">
-              <Sparkles className="text-thai-navy" size={20} />
-            </div>
+            <div className="w-10 h-10 bg-thai-gold rounded-xl flex items-center justify-center shadow-lg shadow-thai-gold/20 group-hover:scale-110 transition-transform"><Sparkles className="text-thai-navy" size={20} /></div>
             <div className="hidden sm:block">
               <h1 className="text-xl font-display font-black text-white tracking-tight">Sawasdee<span className="text-thai-gold italic">!</span></h1>
               <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold -mt-1">Thai Language Tutor</p>
@@ -847,39 +786,22 @@ export default function App() {
           <div className="flex items-center gap-4">
             {user && (
               <div className="flex items-center gap-4 px-3 md:px-4 py-2 bg-white/5 rounded-2xl border border-white/10">
-                <div className="flex items-center gap-1.5 md:gap-2 text-thai-gold font-bold">
-                  <span className="text-[10px] uppercase tracking-tighter opacity-60 font-black text-amber-500">🔥</span>
-                  <span className="text-sm md:text-md">{profile.streak || 0}</span>
-                </div>
+                <div className="flex items-center gap-1.5 md:gap-2 text-thai-gold font-bold"><span className="text-[10px] uppercase tracking-tighter opacity-60 font-black text-amber-500">🔥</span><span className="text-sm md:text-md">{profile.streak || 0}</span></div>
                 <div className="w-px h-4 bg-white/10" />
-                <div className="flex items-center gap-1.5 md:gap-2 text-slate-300 font-bold">
-                  <span className="text-[10px] uppercase tracking-tighter opacity-60 font-black">✧</span>
-                  <span className="text-sm md:text-md">{profile.points || 0}</span>
-                </div>
+                <div className="flex items-center gap-1.5 md:gap-2 text-slate-300 font-bold"><span className="text-[10px] uppercase tracking-tighter opacity-60 font-black">✧</span><span className="text-sm md:text-md">{profile.points || 0}</span></div>
               </div>
             )}
             <div className="flex bg-white/5 p-1 rounded-[1.25rem] border border-white/10">
-              <button onClick={() => setStep('setup')} className={`p-2.5 rounded-xl transition-all flex items-center gap-2 ${step === 'setup' || step === 'learning' ? 'bg-thai-gold text-thai-navy shadow-sm' : 'text-slate-400 hover:text-white'}`} title={currentT.home}>
-                <Home size={20} />
-                <span className={`text-xs font-bold ${step !== 'museum' ? 'block' : 'hidden md:block'}`}>{currentT.home}</span>
-              </button>
-              <button onClick={() => setStep('museum')} className={`p-2.5 rounded-xl transition-all flex items-center gap-2 ${step === 'museum' ? 'bg-thai-gold text-thai-navy shadow-sm' : 'text-slate-400 hover:text-white'}`} title={currentT.museum}>
-                <Gamepad2 size={20} />
-                <span className={`text-xs font-bold ${step === 'museum' ? 'block' : 'hidden md:block'}`}>{currentT.museum}</span>
-              </button>
+              <button onClick={() => setStep('setup')} className={`p-2.5 rounded-xl transition-all flex items-center gap-2 ${step === 'setup' || step === 'learning' ? 'bg-thai-gold text-thai-navy shadow-sm' : 'text-slate-400 hover:text-white'}`} title={currentT.home}><Home size={20} /><span className={`text-xs font-bold ${step !== 'museum' ? 'block' : 'hidden md:block'}`}>{currentT.home}</span></button>
+              <button onClick={() => setStep('museum')} className={`p-2.5 rounded-xl transition-all flex items-center gap-2 ${step === 'museum' ? 'bg-thai-gold text-thai-navy shadow-sm' : 'text-slate-400 hover:text-white'}`} title={currentT.museum}><Gamepad2 size={20} /><span className={`text-xs font-bold ${step === 'museum' ? 'block' : 'hidden md:block'}`}>{currentT.museum}</span></button>
             </div>
             {user ? (
               <div className="flex items-center gap-3 pl-2 border-l border-white/10">
                 {user.photoURL && <img src={user.photoURL} alt="Profile" className="w-8 h-8 md:w-10 md:h-10 rounded-full border-2 border-thai-gold shadow-md" />}
-                <button onClick={handleLogout} className="p-2 md:p-2.5 rounded-xl bg-white/5 text-slate-400 hover:bg-white/10 transition-all border border-white/5" title={currentT.logout}>
-                  <RotateCcw size={18} />
-                </button>
+                <button onClick={handleLogout} className="p-2 md:p-2.5 rounded-xl bg-white/5 text-slate-400 hover:bg-white/10 transition-all border border-white/5" title={currentT.logout}><RotateCcw size={18} /></button>
               </div>
             ) : (
-              <button onClick={handleLogin} className="flex items-center gap-2 px-4 md:px-5 py-2 md:py-2.5 bg-thai-gold text-thai-navy rounded-2xl font-bold hover:bg-white transition-all shadow-md shadow-thai-gold/10">
-                <User size={18} />
-                <span className="hidden sm:inline">{currentT.login}</span>
-              </button>
+              <button onClick={handleLogin} className="flex items-center gap-2 px-4 md:px-5 py-2 md:py-2.5 bg-thai-gold text-thai-navy rounded-2xl font-bold hover:bg-white transition-all shadow-md shadow-thai-gold/10"><User size={18} /><span className="hidden sm:inline">{currentT.login}</span></button>
             )}
           </div>
         </div>
@@ -895,6 +817,8 @@ export default function App() {
                 <p className="text-slate-400 font-medium">{currentT.setupDesc}</p>
               </div>
               <div className="bg-thai-blue rounded-[3rem] p-10 shadow-2xl shadow-black/30 border border-white/5 space-y-10">
+
+                {/* Age & Language */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   <div className="space-y-3">
                     <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest"><User size={16} className="text-thai-gold" />{currentT.age}</label>
@@ -915,6 +839,8 @@ export default function App() {
                     </select>
                   </div>
                 </div>
+
+                {/* Difficulty & Focus */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   <div className="space-y-3">
                     <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest"><Settings size={16} className="text-thai-gold" />{currentT.difficulty}</label>
@@ -945,12 +871,14 @@ export default function App() {
                     </AnimatePresence>
                   </div>
                 </div>
+
+                {/* Daily Goal & Topic */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   <div className="space-y-3">
                     <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest"><CheckCircle2 size={16} className="text-thai-gold" />{currentT.dailyGoal}</label>
                     <div className="relative">
                       <select value={profile.dailyGoal} onChange={(e) => setProfile({ ...profile, dailyGoal: parseInt(e.target.value) })} className="w-full px-5 py-4 rounded-2xl border border-white/10 focus:ring-2 focus:ring-thai-gold/20 focus:border-thai-gold outline-none transition-all appearance-none bg-white/5 font-bold text-white cursor-pointer">
-                        {[1, 3, 5, 10].map((goal) => (<option key={goal} value={goal} className="bg-thai-navy">{goal} {museumLang === 'zh' ? '课时' : (museumLang === 'th' ? 'บทเรียน' : 'Lessons')}</option>))}
+                        {[1, 3, 5, 10].map((goal) => (<option key={goal} value={goal} className="bg-thai-navy">{goal} {profile.auxiliaryLanguage === 'zh' ? '课时' : (profile.auxiliaryLanguage === 'th' ? 'บทเรียน' : 'Lessons')}</option>))}
                       </select>
                       <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none"><ChevronDown size={16} className="text-slate-500" /></div>
                     </div>
@@ -966,16 +894,48 @@ export default function App() {
                     <input type="text" value={profile.topic} onChange={(e) => setProfile({ ...profile, topic: e.target.value })} placeholder={currentT.topicPlaceholder} className="w-full px-5 py-4 rounded-2xl bg-white/5 border border-white/10 focus:ring-2 focus:ring-thai-gold/20 focus:border-thai-gold outline-none transition-all font-bold text-white placeholder:text-slate-600" />
                   </div>
                 </div>
+
+                {/* ✅ API Key 选择器 */}
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest">
+                    <Key size={16} className="text-thai-gold" />
+                    {currentT.apiKeyLabel}
+                  </label>
+                  <div className="flex gap-3">
+                    {availableKeys.map((k) => (
+                      k.available && (
+                        <button
+                          key={k.index}
+                          onClick={() => handleKeySelect(k.index)}
+                          className={`flex-1 py-4 rounded-2xl font-black text-sm transition-all border-2 flex items-center justify-center gap-2 ${
+                            selectedKeyIndex === k.index
+                              ? 'bg-thai-gold text-thai-navy border-thai-gold shadow-lg shadow-thai-gold/20'
+                              : 'bg-white/5 text-slate-300 border-white/10 hover:border-white/30'
+                          }`}
+                        >
+                          <Key size={16} />
+                          {k.label}
+                          {selectedKeyIndex === k.index && <CheckCircle2 size={16} />}
+                        </button>
+                      )
+                    ))}
+                    {availableKeys.every(k => !k.available) && (
+                      <p className="text-sm text-red-400 font-bold">未检测到 API Key，请在 Vercel 环境变量中设置 VITE_GEMINI_API_KEY_1</p>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 font-bold">
+                    {profile.auxiliaryLanguage === 'zh' ? '如某个 Key 额度用尽，切换到其他 Key 继续使用' :
+                     profile.auxiliaryLanguage === 'th' ? 'หากโควต้าหมด ให้เปลี่ยนไปใช้ Key อื่น' :
+                     'Switch keys if one hits its daily quota'}
+                  </p>
+                </div>
+
                 <div className="space-y-5">
-                  {!hasApiKey && (
-                    <button onClick={async () => { if ((window as any).aistudio) { await (window as any).aistudio.openSelectKey(); const selected = await (window as any).aistudio.hasSelectedApiKey(); setHasApiKey(selected); } }} className="w-full bg-white/5 hover:bg-white/10 text-white font-black py-5 rounded-[2rem] shadow-lg transition-all flex items-center justify-center gap-2 border border-white/5">
-                      <Settings size={20} className="text-thai-gold" />{currentT.enableImages}
-                    </button>
-                  )}
                   <button onClick={() => handleStart()} className="w-full bg-thai-gold hover:scale-[1.02] active:scale-95 text-thai-navy font-black py-5 rounded-[2rem] shadow-xl shadow-thai-gold/10 transition-all flex items-center justify-center gap-2 group">
                     {currentT.generateBtn}<ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
                   </button>
                 </div>
+
                 {error && <p className="text-red-500 text-center text-sm font-medium">{error}</p>}
               </div>
             </motion.div>
@@ -998,12 +958,8 @@ export default function App() {
             <motion.div key="learning" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8">
               <div className={`p-10 rounded-[2.5rem] text-white shadow-2xl ${isKid ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-thai-navy' : 'bg-thai-blue border border-white/5'}`}>
                 <div className="flex items-center justify-between mb-6">
-                  <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border ${isKid ? 'bg-thai-navy/10 border-thai-navy/10' : 'bg-white/5 border-white/10'}`}>
-                    {currentT.levels[profile.difficulty]} • {currentT.focuses[profile.focus]}
-                  </span>
-                  <button onClick={() => handleStart(true)} className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all shadow-lg active:scale-95 ${isKid ? 'bg-thai-navy text-white hover:bg-black' : 'bg-thai-gold text-thai-navy hover:bg-white'}`}>
-                    {currentT.nextLesson}
-                  </button>
+                  <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border ${isKid ? 'bg-thai-navy/10 border-thai-navy/10' : 'bg-white/5 border-white/10'}`}>{currentT.levels[profile.difficulty]} • {currentT.focuses[profile.focus]}</span>
+                  <button onClick={() => handleStart(true)} className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all shadow-lg active:scale-95 ${isKid ? 'bg-thai-navy text-white hover:bg-black' : 'bg-thai-gold text-thai-navy hover:bg-white'}`}>{currentT.nextLesson}</button>
                 </div>
                 <h2 className="text-5xl font-display font-black mb-6 uppercase tracking-tight">{lesson.title}</h2>
                 <p className={`text-lg leading-relaxed max-w-3xl font-medium ${isKid ? 'text-thai-navy/80' : 'text-slate-300'}`}>{lesson.introduction}</p>
@@ -1014,19 +970,14 @@ export default function App() {
                   <section className="bg-thai-blue rounded-[2.5rem] p-10 shadow-xl border border-white/5">
                     <div className="flex items-center justify-between mb-8">
                       <h3 className="text-2xl font-display font-black flex items-center gap-2 text-white uppercase tracking-tight"><Sparkles size={24} className="text-thai-gold" />{currentT.keyVocab}</h3>
-                      <AnimatePresence>
-                        {audioError && (
-                          <motion.span initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} className="text-xs text-red-400 font-bold bg-red-400/10 px-4 py-2 rounded-full border border-red-400/20">{audioError}</motion.span>
-                        )}
-                      </AnimatePresence>
+                      <AnimatePresence>{audioError && (<motion.span initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} className="text-xs text-red-400 font-bold bg-red-400/10 px-4 py-2 rounded-full border border-red-400/20">{audioError}</motion.span>)}</AnimatePresence>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       {lesson.vocabulary.map((vocab, idx) => (
                         <div key={idx} className="p-6 rounded-2xl bg-white/5 border border-white/5 hover:border-thai-gold/30 transition-all group shadow-inner">
                           <div className="flex items-start justify-between mb-3">
                             <span className="text-3xl font-black text-thai-gold">{vocab.thai}</span>
-                            <button onClick={() => playAudio(vocab.thai, vocab.audioText)} disabled={loadingAudio === vocab.thai}
-                              className={`p-3 rounded-full transition-all ${loadingAudio === vocab.thai ? 'bg-thai-gold/20 text-thai-gold animate-pulse' : 'bg-white/5 text-slate-400 hover:text-thai-gold hover:bg-white/10'}`}>
+                            <button onClick={() => playAudio(vocab.thai, vocab.audioText)} disabled={loadingAudio === vocab.thai} className={`p-3 rounded-full transition-all ${loadingAudio === vocab.thai ? 'bg-thai-gold/20 text-thai-gold animate-pulse' : 'bg-white/5 text-slate-400 hover:text-thai-gold hover:bg-white/10'}`}>
                               {loadingAudio === vocab.thai ? <Loader2 size={18} className="animate-spin" /> : <Volume2 size={18} />}
                             </button>
                           </div>
@@ -1077,9 +1028,7 @@ export default function App() {
                                     {loadingAudio === ex.question.thai ? <Loader2 size={16} className="animate-spin" /> : <Volume2 size={16} />}
                                   </button>
                                 </div>
-                                {showExerciseTranslations[idx] && (
-                                  <motion.p initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="text-sm text-slate-400 italic mt-2 font-medium">{ex.question.translation}</motion.p>
-                                )}
+                                {showExerciseTranslations[idx] && (<motion.p initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="text-sm text-slate-400 italic mt-2 font-medium">{ex.question.translation}</motion.p>)}
                               </div>
                               {ex.question.imageUrl ? (
                                 <img src={ex.question.imageUrl} alt="Exercise visual" className="w-full max-w-sm h-48 object-cover rounded-3xl shadow-2xl border border-white/5" referrerPolicy="no-referrer" />
@@ -1087,25 +1036,19 @@ export default function App() {
                                 <div className="w-full max-w-sm h-48 bg-thai-navy/50 border-2 border-dashed border-white/10 rounded-3xl flex items-center justify-center"><Sparkles className="text-white/10" size={32} /></div>
                               ) : null}
                             </div>
-                            <button onClick={() => setShowExerciseTranslations(prev => ({ ...prev, [idx]: !prev[idx] }))} className="p-2.5 rounded-xl bg-white/5 text-slate-400 hover:bg-white/10 transition-all flex-shrink-0 border border-white/5">
-                              <Languages size={18} />
-                            </button>
+                            <button onClick={() => setShowExerciseTranslations(prev => ({ ...prev, [idx]: !prev[idx] }))} className="p-2.5 rounded-xl bg-white/5 text-slate-400 hover:bg-white/10 transition-all flex-shrink-0 border border-white/5"><Languages size={18} /></button>
                           </div>
                           {ex.options ? (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               {ex.options.map((opt, optIdx) => (
-                                <button key={optIdx} onClick={() => setAnswers({ ...answers, [idx]: opt })}
-                                  className={`p-5 rounded-2xl text-left text-sm font-black transition-all border-2 shadow-sm ${answers[idx] === opt ? 'bg-thai-gold text-thai-navy border-thai-gold shadow-thai-gold/20' : 'bg-white/5 text-slate-300 border-white/10 hover:border-white/20'}`}>
-                                  {opt}
-                                </button>
+                                <button key={optIdx} onClick={() => setAnswers({ ...answers, [idx]: opt })} className={`p-5 rounded-2xl text-left text-sm font-black transition-all border-2 shadow-sm ${answers[idx] === opt ? 'bg-thai-gold text-thai-navy border-thai-gold shadow-thai-gold/20' : 'bg-white/5 text-slate-300 border-white/10 hover:border-white/20'}`}>{opt}</button>
                               ))}
                             </div>
                           ) : (
                             <input type="text" value={answers[idx] || ''} onChange={(e) => setAnswers({ ...answers, [idx]: e.target.value })} placeholder={currentT.placeholderAnswer} className="w-full px-6 py-4 rounded-2xl bg-white/5 border border-white/10 focus:ring-2 focus:ring-thai-gold/20 focus:border-thai-gold outline-none text-white font-bold" />
                           )}
                           {showResults && (
-                            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
-                              className={`p-6 rounded-[2rem] text-sm font-bold border-2 ${answers[idx]?.toLowerCase() === ex.answer.toLowerCase() ? 'bg-green-400/10 text-green-400 border-green-400/20' : 'bg-red-400/10 text-red-400 border-red-400/20'}`}>
+                            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className={`p-6 rounded-[2rem] text-sm font-bold border-2 ${answers[idx]?.toLowerCase() === ex.answer.toLowerCase() ? 'bg-green-400/10 text-green-400 border-green-400/20' : 'bg-red-400/10 text-red-400 border-red-400/20'}`}>
                               <div className="flex items-center gap-3 mb-3 text-lg font-black uppercase tracking-tight">
                                 {answers[idx]?.toLowerCase() === ex.answer.toLowerCase() ? <CheckCircle2 size={24} /> : <XCircle size={24} />}
                                 {currentT.correctAnswer}: {ex.answer}
@@ -1125,22 +1068,15 @@ export default function App() {
                       <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mt-12 p-10 bg-thai-blue rounded-[3rem] border-2 border-thai-gold shadow-2xl shadow-thai-gold/20 text-center space-y-6">
                         <div className="w-20 h-20 bg-thai-gold/10 text-thai-gold rounded-[2rem] flex items-center justify-center mx-auto shadow-inner"><CheckCircle2 size={40} /></div>
                         <div>
-                          <h3 className="text-3xl font-display font-black text-white uppercase tracking-tight">
-                            {calculateScore() === 100 ? (museumLang === 'zh' ? '完美表现！' : 'Perfect Score!') : (museumLang === 'zh' ? '练习完成' : 'Lesson Complete')}
-                          </h3>
-                          <p className="text-xl text-slate-400 font-bold mt-2">
-                            {museumLang === 'zh' ? '您获得了' : 'You earned'} <span className="text-thai-gold font-black">✧ {Math.round((calculateScore() / 10) * pointsMultiplier)}</span> {currentT.pointsLabel}
-                          </p>
+                          <h3 className="text-3xl font-display font-black text-white uppercase tracking-tight">{calculateScore() === 100 ? (profile.auxiliaryLanguage === 'zh' ? '完美表现！' : 'Perfect Score!') : (profile.auxiliaryLanguage === 'zh' ? '练习完成' : 'Lesson Complete')}</h3>
+                          <p className="text-xl text-slate-400 font-bold mt-2">{profile.auxiliaryLanguage === 'zh' ? '您获得了' : 'You earned'} <span className="text-thai-gold font-black">✧ {Math.round((calculateScore() / 10) * pointsMultiplier)}</span> {currentT.pointsLabel}</p>
                           {profile.lessonsCompletedToday % profile.dailyGoal === 0 && (
                             <motion.div initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.3 }} className="mt-6 p-4 bg-thai-gold text-thai-navy rounded-2xl shadow-lg text-sm font-black flex items-center justify-center gap-2 uppercase tracking-widest">
-                              <Sparkles size={18} />
-                              {museumLang === 'zh' ? `目标达成奖励：+${calculatePointsReward(profile.dailyGoal, profile.streak > 1 && profile.dailyGoal === 10)} 积分！` : `Goal Bonus: +${calculatePointsReward(profile.dailyGoal, profile.streak > 1 && profile.dailyGoal === 10)} Points!`}
+                              <Sparkles size={18} />{profile.auxiliaryLanguage === 'zh' ? `目标达成奖励：+${calculatePointsReward(profile.dailyGoal, profile.streak > 1 && profile.dailyGoal === 10)} 积分！` : `Goal Bonus: +${calculatePointsReward(profile.dailyGoal, profile.streak > 1 && profile.dailyGoal === 10)} Points!`}
                             </motion.div>
                           )}
                         </div>
-                        <button onClick={() => setStep('setup')} className="w-full py-5 bg-thai-gold text-thai-navy font-black rounded-2xl hover:bg-white transition-all shadow-xl active:scale-95">
-                          {museumLang === 'zh' ? '返回首页' : 'Return Home'}
-                        </button>
+                        <button onClick={() => setStep('setup')} className="w-full py-5 bg-thai-gold text-thai-navy font-black rounded-2xl hover:bg-white transition-all shadow-xl active:scale-95">{profile.auxiliaryLanguage === 'zh' ? '返回首页' : 'Return Home'}</button>
                       </motion.div>
                     )}
                   </section>
@@ -1175,9 +1111,7 @@ export default function App() {
 
       <footer className="py-20 border-t border-white/5 mt-20 bg-black/20">
         <div className="max-w-5xl mx-auto px-4 text-center">
-          <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em]">
-            © 2026 Sawasdee Learn • Powered by Gemini AI
-          </p>
+          <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em]">© 2026 Sawasdee Learn • Powered by Gemini AI</p>
         </div>
       </footer>
     </div>
