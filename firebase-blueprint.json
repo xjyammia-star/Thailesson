@@ -1,0 +1,30 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Stores user learning progress, points, and achievements.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "difficulty": { "type": "string" },
+        "focus": { "type": "string" },
+        "topic": { "type": "string" },
+        "dailyGoal": { "type": "number" },
+        "points": { "type": "number" },
+        "streak": { "type": "number" },
+        "lastGoalCompletionDate": { "type": "string", "format": "date" },
+        "unlockedAchievements": { "type": "array", "items": { "type": "string" } },
+        "lessonsCompletedToday": { "type": "number" },
+        "lastLessonDate": { "type": "string", "format": "date" },
+        "pastVocabulary": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["userId", "points", "streak"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Individual user progress and gamification state."
+    }
+  }
+}

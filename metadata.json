@@ -1,0 +1,5 @@
+{
+  "name": "Sawasdee Learn - Personalized Thai Tutor",
+  "description": "A personalized Thai language learning app that generates content based on age, level, focus, and interests using AI.",
+  "requestFramePermissions": ["microphone"]
+}
