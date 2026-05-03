@@ -2,7 +2,6 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { UserProfile, ThaiLesson } from "../types";
 
 function getAIInstance() {
-  // 修正：Vite 项目必须用 import.meta.env，不能用 process.env
   const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
   return new GoogleGenAI({ apiKey });
 }
@@ -70,7 +69,7 @@ export async function generateThaiLesson(profile: UserProfile, lessonCount: numb
     `;
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",  // ✅ 修正：原来是假模型名 gemini-3-flash-preview
+    model: "gemini-2.5-flash",
     contents: prompt,
     config: {
       systemInstruction,
@@ -157,16 +156,17 @@ export async function generateImage(prompt: string): Promise<string | null> {
   try {
     const ai = getAIInstance();
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-image", // ✅ 修正：使用正确的图片生成模型名
+      model: "gemini-2.5-flash-image",
       contents: prompt,
       config: {
         responseModalities: ["TEXT", "IMAGE"],
       }
     });
 
-    const candidates = response.candidates;
-    if (candidates && candidates[0]?.content?.parts) {
-      for (const part of candidates[0].content.parts) {
+    // 参照官方文档的正确提取方式
+    const parts = response.candidates?.[0]?.content?.parts;
+    if (parts) {
+      for (const part of parts) {
         if (part.inlineData?.data) {
           return `data:image/png;base64,${part.inlineData.data}`;
         }
@@ -176,9 +176,8 @@ export async function generateImage(prompt: string): Promise<string | null> {
   } catch (e: any) {
     const status = e?.status || e?.code || 0;
     const message = e?.message || "";
-
     if (status === 429 || message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
-      console.warn("Image generation: Quota exceeded (429).");
+      console.warn("Image generation: Quota exceeded.");
       return "QUOTA_EXCEEDED";
     } else if (status === 403 || message.includes('403')) {
       console.warn("Image generation: Permission denied (403).");
@@ -191,41 +190,31 @@ export async function generateImage(prompt: string): Promise<string | null> {
   }
 }
 
-// ✅ 修正：用浏览器原生 Web Speech API 代替 Gemini TTS
-// 好处：完全免费、无配额限制、泰语支持良好
+// 浏览器原生 Web Speech API 播放泰语
 export function speakThai(text: string): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!window.speechSynthesis) {
       reject(new Error("Web Speech API not supported"));
       return;
     }
-
-    // 停止当前正在播放的语音
     window.speechSynthesis.cancel();
-
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "th-TH"; // 泰语
-    utterance.rate = 0.85;    // 稍慢，适合学习
+    utterance.lang = "th-TH";
+    utterance.rate = 0.85;
     utterance.pitch = 1.0;
-
-    // 优先选择泰语语音，如果没有则用默认语音
     const voices = window.speechSynthesis.getVoices();
     const thaiVoice = voices.find(v => v.lang.startsWith("th"));
     if (thaiVoice) utterance.voice = thaiVoice;
-
     utterance.onend = () => resolve();
     utterance.onerror = (e) => reject(e);
-
     window.speechSynthesis.speak(utterance);
   });
 }
 
-// 保留 generateAudio 名字作为兼容接口，内部用 Web Speech API
-// 返回 null 表示不需要base64数据（Web Speech API直接播放）
 export async function generateAudio(text: string): Promise<string | null> {
   try {
     await speakThai(text);
-    return "WEB_SPEECH_PLAYED"; // 标记已播放
+    return "WEB_SPEECH_PLAYED";
   } catch (e) {
     console.error("Web Speech API error:", e);
     return null;
