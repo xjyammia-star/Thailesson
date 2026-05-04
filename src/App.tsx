@@ -5,29 +5,16 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  BookOpen, 
-  Settings, 
-  Sparkles, 
-  Volume2, 
-  ChevronRight, 
-  ChevronDown,
-  RotateCcw, 
-  CheckCircle2, 
-  XCircle,
-  Loader2,
-  Languages,
-  User,
-  Gamepad2,
-  ArrowLeft,
-  Home,
-  Key
+  BookOpen, Settings, Sparkles, Volume2, ChevronRight, ChevronDown,
+  RotateCcw, CheckCircle2, XCircle, Loader2, Languages, User,
+  Gamepad2, ArrowLeft, Home, Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db, auth } from './lib/firebase';
 import { UserProfile, ThaiLesson, Difficulty, LearningFocus, AuxiliaryLanguage, AppAchievement } from './types';
-import { generateThaiLesson, getAvailableKeys } from './services/gemini';
+import { generateThaiLesson, generateImage, generateTTS, playBase64Audio, speakThai, getAvailableKeys } from './services/gemini';
 
 const APP_ACHIEVEMENTS: AppAchievement[] = [
   { id: 'bkk', province: { zh: '曼谷', en: 'Bangkok', th: 'กรุงเทพฯ' }, specialty: { zh: '大皇宫与玉佛寺', en: 'The Grand Palace', th: 'พระบรมมหาราชวัง' }, description: { zh: '泰国王室的象征，融合了泰式与欧式风格。', en: 'The symbolic heart of Bangkok, featuring the Emerald Buddha.', th: 'ศูนย์กลางทางจิตใจของปวงฃนชาวไทย' }, imagePrompt: '', specialtyImagePrompt: '', price: 100, buff: { type: 'points_multiplier', value: 1.01 } },
@@ -65,11 +52,22 @@ export default function App() {
     return saved ? parseInt(saved) : 1;
   });
 
+  // 语速设置（0.5=很慢, 1.0=正常, 1.5=快）
+  const [speechRate, setSpeechRate] = useState<number>(() => {
+    const saved = localStorage.getItem('sawasdee_speech_rate');
+    return saved ? parseFloat(saved) : 0.85;
+  });
+
   const availableKeys = getAvailableKeys();
 
   const handleKeySelect = (index: number) => {
     setSelectedKeyIndex(index);
     localStorage.setItem('sawasdee_key_index', String(index));
+  };
+
+  const handleSpeechRateChange = (rate: number) => {
+    setSpeechRate(rate);
+    localStorage.setItem('sawasdee_speech_rate', String(rate));
   };
 
   const profileRef = useRef(profile);
@@ -123,13 +121,47 @@ export default function App() {
     try {
       const nextCount = isNext ? lessonCount + 1 : 1;
       const generatedLesson = await generateThaiLesson(profile, nextCount, selectedKeyIndex);
-      const finalLesson = { ...generatedLesson, vocabulary: generatedLesson.vocabulary.slice(0, 4) };
+
+      // 图片生成
+      setLoadingText(currentT.loadingImages);
+      const limitedVocab = generatedLesson.vocabulary.slice(0, 4);
+      let quotaExceeded = false;
+
+      const imagesToGenerate: { prompt: string, callback: (url: string) => void }[] = [];
+      limitedVocab.forEach(v => {
+        imagesToGenerate.push({ prompt: v.imagePrompt, callback: (url) => { v.imageUrl = url; } });
+      });
+      generatedLesson.exercise.forEach(ex => {
+        if (ex.question.imagePrompt) {
+          imagesToGenerate.push({ prompt: ex.question.imagePrompt, callback: (url) => { ex.question.imageUrl = url; } });
+        }
+      });
+
+      for (const item of imagesToGenerate) {
+        if (quotaExceeded) break;
+        try {
+          const imageUrl = await generateImage(item.prompt);
+          if (imageUrl === "QUOTA_EXCEEDED") {
+            quotaExceeded = true;
+          } else if (imageUrl) {
+            item.callback(imageUrl);
+          }
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (e) {
+          console.warn("Image generation failed:", e);
+        }
+      }
+
+      if (quotaExceeded) setError(currentT.quotaError);
+
+      const finalLesson = { ...generatedLesson, vocabulary: limitedVocab };
       setLesson(finalLesson);
       setLessonCount(nextCount);
       setStep('learning');
       setShowResults(false);
       setShowExerciseTranslations({});
       setAnswers({});
+
       const newWords = finalLesson.vocabulary.map(v => v.thai);
       setProfile(prev => ({ ...prev, pastVocabulary: [...new Set([...prev.pastVocabulary, ...newWords])] }));
     } catch (err) {
@@ -157,33 +189,44 @@ export default function App() {
     return Math.round(base * pointsMultiplier);
   };
 
-  // ✅ 修复语音播放
+  // ✅ 语音播放：优先用 Google Cloud TTS，降级用 Web Speech API
   const playAudio = async (text: string, speakText?: string) => {
     setAudioError(null);
     const textToSpeak = speakText || text;
+
     try {
       setLoadingAudio(text);
+
+      // 尝试 Google Cloud TTS
+      const base64Audio = await generateTTS(textToSpeak);
+      if (base64Audio) {
+        await playBase64Audio(base64Audio);
+        setLoadingAudio(null);
+        return;
+      }
+
+      // 降级：Web Speech API
+      console.warn('[Audio] Falling back to Web Speech API');
       const synth = window.speechSynthesis;
       if (!synth) { setAudioError(currentT.audioError); setLoadingAudio(null); return; }
       synth.cancel();
-      const getVoices = () => new Promise<SpeechSynthesisVoice[]>((resolve) => {
+      await new Promise<void>((resolve) => {
         const v = synth.getVoices();
-        if (v.length > 0) return resolve(v);
-        synth.onvoiceschanged = () => resolve(synth.getVoices());
-        setTimeout(() => resolve(synth.getVoices()), 1000);
+        if (v.length > 0) resolve();
+        else { synth.onvoiceschanged = () => resolve(); setTimeout(resolve, 1000); }
       });
-      const voices = await getVoices();
       const utterance = new SpeechSynthesisUtterance(textToSpeak);
       utterance.lang = 'th-TH';
-      utterance.rate = 0.8;
+      utterance.rate = speechRate;
       utterance.pitch = 1.0;
       utterance.volume = 1.0;
+      const voices = synth.getVoices();
       const thaiVoice = voices.find(v => v.lang.startsWith('th'));
       if (thaiVoice) utterance.voice = thaiVoice;
       utterance.onend = () => setLoadingAudio(null);
       utterance.onerror = () => { setLoadingAudio(null); setAudioError(currentT.playbackError); };
       synth.speak(utterance);
-      if (/iP(hone|ad|od)/.test(navigator.userAgent)) setTimeout(() => { if (synth.paused) synth.resume(); }, 100);
+
     } catch (err) {
       setLoadingAudio(null);
       setAudioError(currentT.playbackError);
@@ -217,19 +260,21 @@ export default function App() {
       auxLang: '辅助语言', difficulty: '学习等级', focus: '学习重点',
       topicLabel: '感兴趣的主题', topicPlaceholder: '输入你想学习的内容背景...',
       generateBtn: '开始生成课程', loadingCrafting: '正在为您编排泰语课程...',
-      loadingWriting: '正在为你编写专属教材...', loadingMagic: '魔法正在发生，请稍等！',
-      loadingAI: 'AI 正在根据你的偏好整合泰语知识点。', dailyGoal: '今日目标',
-      museum: '成就馆', museumTitle: '成就博物馆', apiKeyLabel: 'API Key 选择',
+      loadingImages: '正在为您生成精美插图...', loadingWriting: '正在为你编写专属教材...',
+      loadingMagic: '魔法正在发生，请稍等！', loadingAI: 'AI 正在根据你的偏好整合泰语知识点。',
+      dailyGoal: '今日目标', museum: '成就馆', museumTitle: '成就博物馆',
+      apiKeyLabel: 'API Key 选择', speechRateLabel: '语音速度',
+      speechRateSlow: '慢', speechRateNormal: '正常', speechRateFast: '快',
       levels: { Foundations: '入门 (发音/字母)', Elementary: '初级 (基础词汇)', Intermediate: '中级 (日常对话)', Advanced: '高级 (地道表达)' },
       focuses: { Listening: '听力', Speaking: '口语', Reading: '阅读', Writing: '写作', Comprehensive: '综合' },
       focusDescriptions: { Listening: '核心：磨炼辨音与语调。', Speaking: '核心：模拟实战对话。', Reading: '核心：文字拆解与长句。', Writing: '核心：构词逻辑与翻译。', Comprehensive: '核心：平衡各维发展。' },
       levelDescriptions: { Foundations: '适合零基础。从泰语辅音、元音和五大声调开始。', Elementary: '核心在于常用词汇和基础语法。', Intermediate: '专注于实际对话场景。', Advanced: '挑战地道表达，研究复杂句式。' },
-      goalRewardLabel: (r: number) => `完成此目标可获得 ✧ ${r} 积分`, nextLesson: '下一课',
-      keyVocab: '核心词汇', reading: '阅读训练', interactive: '互动练习',
+      goalRewardLabel: (r: number) => `完成此目标可获得 ✧ ${r} 积分`,
+      nextLesson: '下一课', keyVocab: '核心词汇', reading: '阅读训练', interactive: '互动练习',
       placeholderAnswer: '输入你的答案...', submit: '提交答案', correctAnswer: '正确答案',
       culturalNote: '文化小贴士', progress: '学习进度',
       milestone: (n: number) => `已完成 ${n} 课时，距下一里程碑还有 ${10 - (n % 10)} 课！`,
-      audioError: '语音不可用，请先安装 Windows 泰语语音包。', playbackError: '播放失败，请重试。',
+      quotaError: '图像生成配额已用完，本课不显示图片。', audioError: '语音服务暂时不可用。', playbackError: '播放失败，请重试。',
       museumDesc: '通过辛勤学习解锁的泰式珍宝。', balance: '可用余额',
       discoveryTitle: '泰国文化探索之旅',
       discoveryProgress: (u: number, t: number, m: string) => `已解锁 ${u}/${t} 件珍宝，课程收益提升 x${m} 倍！`,
@@ -244,19 +289,21 @@ export default function App() {
       auxLang: 'Auxiliary Language', difficulty: 'Difficulty', focus: 'Focus',
       topicLabel: 'Topic of Interest', topicPlaceholder: 'Enter a topic...',
       generateBtn: 'Generate Lesson', loadingCrafting: 'Crafting your lesson...',
-      loadingWriting: 'Writing your lesson...', loadingMagic: 'Magic happening!',
-      loadingAI: 'AI integrating Thai knowledge for you.', dailyGoal: 'Daily Goal',
-      museum: 'Museum', museumTitle: 'Museum of Achievements', apiKeyLabel: 'API Key',
+      loadingImages: 'Generating illustrations...', loadingWriting: 'Writing your lesson...',
+      loadingMagic: 'Magic happening!', loadingAI: 'AI integrating Thai knowledge for you.',
+      dailyGoal: 'Daily Goal', museum: 'Museum', museumTitle: 'Museum of Achievements',
+      apiKeyLabel: 'API Key', speechRateLabel: 'Speech Speed',
+      speechRateSlow: 'Slow', speechRateNormal: 'Normal', speechRateFast: 'Fast',
       levels: { Foundations: 'Foundations', Elementary: 'Elementary', Intermediate: 'Intermediate', Advanced: 'Advanced' },
       focuses: { Listening: 'Listening', Speaking: 'Speaking', Reading: 'Reading', Writing: 'Writing', Comprehensive: 'Comprehensive' },
       focusDescriptions: { Listening: 'Sharpen phoneme recognition.', Speaking: 'Simulate real dialogue.', Reading: 'Text decomposition.', Writing: 'Word construction.', Comprehensive: 'Balanced development.' },
       levelDescriptions: { Foundations: 'For beginners. Start with consonants, vowels, and tones.', Elementary: 'Common vocabulary and basic grammar.', Intermediate: 'Practical conversations.', Advanced: 'Master native expressions.' },
-      goalRewardLabel: (r: number) => `Reward: ✧ ${r} points`, nextLesson: 'Next Lesson',
-      keyVocab: 'Key Vocabulary', reading: 'Reading', interactive: 'Exercises',
+      goalRewardLabel: (r: number) => `Reward: ✧ ${r} points`,
+      nextLesson: 'Next Lesson', keyVocab: 'Key Vocabulary', reading: 'Reading', interactive: 'Exercises',
       placeholderAnswer: 'Type your answer...', submit: 'Submit', correctAnswer: 'Correct Answer',
       culturalNote: 'Cultural Note', progress: 'Progress',
       milestone: (n: number) => `${n} lessons done. ${10 - (n % 10)} more to milestone!`,
-      audioError: 'Voice unavailable. Please install Thai voice pack.', playbackError: 'Playback failed.',
+      quotaError: 'Image quota exceeded. Lesson shown without images.', audioError: 'Voice service unavailable.', playbackError: 'Playback failed.',
       museumDesc: 'Treasures unlocked through dedication.', balance: 'Balance',
       discoveryTitle: 'Thailand Discovery',
       discoveryProgress: (u: number, t: number, m: string) => `Unlocked ${u}/${t}. Earnings x${m}!`,
@@ -271,19 +318,21 @@ export default function App() {
       auxLang: 'ภาษาเสริม', difficulty: 'ระดับความยาก', focus: 'เน้นการเรียนรู้',
       topicLabel: 'หัวข้อที่สนใจ', topicPlaceholder: 'ป้อนหัวข้อ...',
       generateBtn: 'สร้างบทเรียน', loadingCrafting: 'กำลังสร้างบทเรียน...',
-      loadingWriting: 'กำลังเขียนบทเรียน...', loadingMagic: 'กำลังเกิดขึ้น!',
-      loadingAI: 'AI กำลังรวมความรู้', dailyGoal: 'เป้าหมายรายวัน',
-      museum: 'พิพิธภัณฑ์', museumTitle: 'พิพิธภัณฑ์', apiKeyLabel: 'API Key',
+      loadingImages: 'กำลังสร้างภาพ...', loadingWriting: 'กำลังเขียนบทเรียน...',
+      loadingMagic: 'กำลังเกิดขึ้น!', loadingAI: 'AI กำลังรวมความรู้',
+      dailyGoal: 'เป้าหมายรายวัน', museum: 'พิพิธภัณฑ์', museumTitle: 'พิพิธภัณฑ์',
+      apiKeyLabel: 'API Key', speechRateLabel: 'ความเร็วเสียง',
+      speechRateSlow: 'ช้า', speechRateNormal: 'ปกติ', speechRateFast: 'เร็ว',
       levels: { Foundations: 'พื้นฐาน', Elementary: 'เริ่มต้น', Intermediate: 'กลาง', Advanced: 'สูง' },
       focuses: { Listening: 'ฟัง', Speaking: 'พูด', Reading: 'อ่าน', Writing: 'เขียน', Comprehensive: 'ครอบคลุม' },
       focusDescriptions: { Listening: 'ฝึกการฟัง', Speaking: 'ฝึกการพูด', Reading: 'ฝึกการอ่าน', Writing: 'ฝึกการเขียน', Comprehensive: 'ครอบคลุมทุกด้าน' },
       levelDescriptions: { Foundations: 'สำหรับผู้เริ่มต้น', Elementary: 'คำศัพท์พื้นฐาน', Intermediate: 'บทสนทนาจริง', Advanced: 'ระดับเจ้าของภาษา' },
-      goalRewardLabel: (r: number) => `รางวัล: ✧ ${r} คะแนน`, nextLesson: 'บทถัดไป',
-      keyVocab: 'คำศัพท์', reading: 'อ่าน', interactive: 'แบบฝึกหัด',
+      goalRewardLabel: (r: number) => `รางวัล: ✧ ${r} คะแนน`,
+      nextLesson: 'บทถัดไป', keyVocab: 'คำศัพท์', reading: 'อ่าน', interactive: 'แบบฝึกหัด',
       placeholderAnswer: 'พิมพ์คำตอบ...', submit: 'ส่ง', correctAnswer: 'คำตอบที่ถูก',
       culturalNote: 'บันทึกวัฒนธรรม', progress: 'ความก้าวหน้า',
       milestone: (n: number) => `เรียนจบ ${n} บทแล้ว!`,
-      audioError: 'เสียงไม่พร้อม', playbackError: 'เล่นไม่ได้',
+      quotaError: 'โควตาภาพหมด', audioError: 'เสียงไม่พร้อม', playbackError: 'เล่นไม่ได้',
       museumDesc: 'ขุมทรัพย์ที่ปลดล็อกแล้ว', balance: 'ยอดคงเหลือ',
       discoveryTitle: 'สำรวจไทย',
       discoveryProgress: (u: number, t: number, m: string) => `ปลดล็อก ${u}/${t} x${m}!`,
@@ -300,7 +349,6 @@ export default function App() {
     const [mLang, setMLang] = useState<'zh' | 'en' | 'th'>('zh');
     const mT = t[mLang];
     const [buyingId, setBuyingId] = useState<string | null>(null);
-
     const handleBuy = async (ach: AppAchievement) => {
       if (profile.points >= ach.price && !profile.unlockedAchievements.includes(ach.id)) {
         setBuyingId(ach.id);
@@ -308,11 +356,9 @@ export default function App() {
         setBuyingId(null);
       }
     };
-
     const uCount = profile.unlockedAchievements.length;
-    let dTarget = uCount >= 9 ? 10 : uCount >= 5 ? 9 : 5;
+    const dTarget = uCount >= 9 ? 10 : uCount >= 5 ? 9 : 5;
     const mPct = (uCount / dTarget) * 100;
-
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-10 pb-32">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
@@ -338,7 +384,6 @@ export default function App() {
             </div>
           </div>
         </div>
-
         <div className="bg-thai-blue p-8 rounded-[2.5rem] border border-white/5 relative overflow-hidden">
           <div className="absolute top-0 right-0 p-8 opacity-5"><Gamepad2 size={120} /></div>
           <div className="relative z-10 flex flex-col md:flex-row items-center gap-8">
@@ -355,7 +400,6 @@ export default function App() {
             </div>
           </div>
         </div>
-
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {APP_ACHIEVEMENTS.map((ach, idx) => {
             const unlocked = profile.unlockedAchievements.includes(ach.id);
@@ -369,7 +413,6 @@ export default function App() {
                   <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${tierColor}`}>{regionName}</span>
                   {!unlocked && <span className="px-3 py-1 bg-white/5 rounded-full text-[10px] font-black text-slate-400">✧ {ach.price.toLocaleString()}</span>}
                 </div>
-                {/* ✅ 成就馆用 dicebear 图案作为装饰，不需要 AI 生成图片 */}
                 <div className="relative w-full aspect-square rounded-3xl overflow-hidden bg-white/5">
                   <img src={`https://api.dicebear.com/7.x/shapes/svg?seed=${ach.id}&backgroundColor=0b1120`} alt="" className={`w-full h-full object-cover p-8 ${!unlocked ? 'opacity-20 blur-sm' : ''}`} />
                   {!unlocked && (
@@ -456,6 +499,7 @@ export default function App() {
                 <p className="text-slate-400">{currentT.setupDesc}</p>
               </div>
               <div className="bg-thai-blue rounded-[3rem] p-10 shadow-2xl border border-white/5 space-y-8">
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest"><User size={16} className="text-thai-gold" />{currentT.age}</label>
@@ -517,6 +561,25 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* ✅ 语音速度设置 */}
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest">
+                    <Volume2 size={16} className="text-thai-gold" />{currentT.speechRateLabel}
+                  </label>
+                  <div className="flex gap-3">
+                    {[
+                      { rate: 0.6, label: currentT.speechRateSlow },
+                      { rate: 0.85, label: currentT.speechRateNormal },
+                      { rate: 1.1, label: currentT.speechRateFast },
+                    ].map(({ rate, label }) => (
+                      <button key={rate} onClick={() => handleSpeechRateChange(rate)}
+                        className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all border-2 ${speechRate === rate ? 'bg-thai-gold text-thai-navy border-thai-gold' : 'bg-white/5 text-slate-300 border-white/10 hover:border-white/30'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* API Key 选择 */}
                 <div className="space-y-2">
                   <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest"><Key size={16} className="text-thai-gold" />{currentT.apiKeyLabel}</label>
@@ -534,7 +597,6 @@ export default function App() {
                 <button onClick={() => handleStart()} className="w-full bg-thai-gold hover:scale-[1.02] active:scale-95 text-thai-navy font-black py-5 rounded-[2rem] shadow-xl transition-all flex items-center justify-center gap-2 group">
                   {currentT.generateBtn}<ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
                 </button>
-
                 {error && <p className="text-red-500 text-center text-sm">{error}</p>}
               </div>
             </motion.div>
@@ -570,8 +632,7 @@ export default function App() {
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 space-y-8">
-
-                  {/* ✅ 词汇卡片 - 完全去掉图片占位符 */}
+                  {/* 词汇卡片 */}
                   <section className="bg-thai-blue rounded-[2.5rem] p-10 shadow-xl border border-white/5">
                     <div className="flex items-center justify-between mb-8">
                       <h3 className="text-2xl font-display font-black flex items-center gap-2 text-white uppercase"><Sparkles size={24} className="text-thai-gold" />{currentT.keyVocab}</h3>
@@ -587,6 +648,9 @@ export default function App() {
                               {loadingAudio === vocab.thai ? <Loader2 size={18} className="animate-spin" /> : <Volume2 size={18} />}
                             </button>
                           </div>
+                          {vocab.imageUrl ? (
+                            <img src={vocab.imageUrl} alt={vocab.thai} className="w-full h-40 object-cover rounded-xl mb-3 shadow-lg border border-white/5" />
+                          ) : null}
                           <p className="text-xs font-mono text-slate-500 mb-1 tracking-wider uppercase">{vocab.phonetic}</p>
                           <p className="text-lg font-black text-white mb-3">{vocab.translation}</p>
                           <div className="text-xs space-y-1 pt-3 border-t border-white/5">
@@ -633,6 +697,9 @@ export default function App() {
                               {showExerciseTranslations[idx] && (
                                 <motion.p initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="text-sm text-slate-400 italic">{ex.question.translation}</motion.p>
                               )}
+                              {ex.question.imageUrl && (
+                                <img src={ex.question.imageUrl} alt="" className="w-full max-w-sm h-48 object-cover rounded-3xl shadow-lg border border-white/5" />
+                              )}
                             </div>
                             <button onClick={() => setShowExerciseTranslations(prev => ({ ...prev, [idx]: !prev[idx] }))} className="p-2.5 rounded-xl bg-white/5 text-slate-400 hover:bg-white/10 flex-shrink-0 border border-white/5">
                               <Languages size={18} />
@@ -666,7 +733,6 @@ export default function App() {
                         </div>
                       ))}
                     </div>
-
                     {!showResults ? (
                       <button onClick={handleFinishLesson} className="mt-10 w-full py-5 bg-thai-gold text-thai-navy font-black rounded-3xl hover:bg-white transition-all active:scale-95">{currentT.submit}</button>
                     ) : (
