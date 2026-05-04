@@ -18,7 +18,7 @@ async function generateWithDoubao(systemPrompt: string, userPrompt: string): Pro
   console.log("[Doubao] API Key prefix:", apiKey?.substring(0, 8) || "EMPTY");
   console.log("[Doubao] Endpoint ID prefix:", endpointId?.substring(0, 10) || "EMPTY");
 
-  if (!apiKey || !endpointId) throw new Error("Doubao not configured: missing apiKey or endpointId");
+  if (!apiKey || !endpointId) throw new Error("Doubao not configured");
 
   let response: Response;
   try {
@@ -43,7 +43,7 @@ async function generateWithDoubao(systemPrompt: string, userPrompt: string): Pro
       }
     );
   } catch (fetchErr: any) {
-    console.error("[Doubao] Network fetch error:", fetchErr?.message, fetchErr);
+    console.error("[Doubao] Network fetch error:", fetchErr?.message);
     throw fetchErr;
   }
 
@@ -51,16 +51,16 @@ async function generateWithDoubao(systemPrompt: string, userPrompt: string): Pro
 
   if (!response.ok) {
     const errText = await response.text();
-    console.error("[Doubao] API error response:", response.status, errText);
+    console.error("[Doubao] API error:", response.status, errText);
     throw new Error(`Doubao error ${response.status}: ${errText.substring(0, 300)}`);
   }
 
   const data = await response.json();
-  console.log("[Doubao] Response received, finish_reason:", data?.choices?.[0]?.finish_reason);
+  console.log("[Doubao] finish_reason:", data?.choices?.[0]?.finish_reason);
 
   const text = data?.choices?.[0]?.message?.content;
   if (!text) {
-    console.error("[Doubao] No content in response:", JSON.stringify(data).substring(0, 200));
+    console.error("[Doubao] No content:", JSON.stringify(data).substring(0, 200));
     throw new Error("No response content from Doubao");
   }
   return text;
@@ -85,9 +85,7 @@ export function getAvailableKeys(): { index: number; label: string; available: b
 
 export function isDoubaoAvailable(): boolean {
   const { apiKey, endpointId } = getDoubaoConfig();
-  const available = !!apiKey && !!endpointId;
-  console.log("[Doubao] isDoubaoAvailable:", available, "key:", apiKey?.substring(0, 5) || "empty", "endpoint:", endpointId?.substring(0, 5) || "empty");
-  return available;
+  return !!apiKey && !!endpointId;
 }
 
 function getGeminiApiKey(keyIndex: number = 1): string {
@@ -137,15 +135,21 @@ Rules:
       console.log("[Lesson] Using Doubao Seed 2.0 Lite...");
       const text = await generateWithDoubao(systemInstruction, userPrompt);
       const cleaned = text.replace(/```json|```/g, "").trim();
-      console.log("[Lesson] Doubao response length:", cleaned.length);
-      return JSON.parse(cleaned) as ThaiLesson;
+      console.log("[Lesson] Response length:", cleaned.length);
+      console.log("[Lesson] Response preview:", cleaned.substring(0, 300));
+      try {
+        return JSON.parse(cleaned) as ThaiLesson;
+      } catch (parseErr: any) {
+        console.error("[Lesson] JSON parse failed:", parseErr.message);
+        console.error("[Lesson] Raw text (first 500):", cleaned.substring(0, 500));
+        console.error("[Lesson] Raw text (last 200):", cleaned.substring(cleaned.length - 200));
+        throw parseErr;
+      }
     } catch (e: any) {
-      console.error("[Lesson] Doubao failed:", e?.message, e);
+      console.error("[Lesson] Doubao failed:", e?.message);
       console.warn("[Lesson] Falling back to Gemini Key 1...");
       geminiKeyIndex = 1;
     }
-  } else {
-    console.log("[Lesson] Skipping Doubao - keyIndex:", geminiKeyIndex, "doubaoAvailable:", isDoubaoAvailable());
   }
 
   // 备用 Gemini
