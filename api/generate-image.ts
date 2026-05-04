@@ -1,5 +1,6 @@
 // api/generate-image.ts
-// Vercel Serverless Function - 服务器端运行，解决 CORS 问题
+// 服务器端调用 Google Imagen 4 生成图片
+// 通过 Vertex AI REST API 调用
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -7,84 +8,64 @@ export default async function handler(req: any, res: any) {
   }
 
   const { prompt } = req.body;
-  if (!prompt) {
-    return res.status(400).json({ error: 'Missing prompt' });
-  }
+  if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
 
-  const hfToken = process.env.HF_TOKEN || "";
-  if (!hfToken) {
-    console.error("[API] No HF_TOKEN found");
+  const apiKey = process.env.GOOGLE_TTS_KEY || '';
+  const projectId = process.env.GOOGLE_CLOUD_PROJECT || '';
+
+  if (!apiKey || !projectId) {
+    console.error('[IMG] Missing GOOGLE_TTS_KEY or GOOGLE_CLOUD_PROJECT');
     return res.status(500).json({ error: 'Server not configured' });
   }
 
-  // 依次尝试多个模型，直到成功为止
-  const models = [
-    "stabilityai/stable-diffusion-xl-base-1.0",
-    "runwayml/stable-diffusion-v1-5",
-    "CompVis/stable-diffusion-v1-4",
-  ];
+  try {
+    console.log('[IMG] Generating image for:', prompt.substring(0, 60));
 
-  for (const model of models) {
-    try {
-      console.log(`[API] Trying model: ${model}`);
-
-      const response = await fetch(
-        `https://api-inference.huggingface.co/models/${model}`,
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${hfToken}`,
-            "Content-Type": "application/json",
+    // 使用 Imagen 4 Fast（最便宜，$0.02/张，速度快）
+    const response = await fetch(
+      `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/imagen-4.0-fast-generate-preview-06-06:predict`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': apiKey,
+        },
+        body: JSON.stringify({
+          instances: [{ prompt }],
+          parameters: {
+            sampleCount: 1,
+            aspectRatio: '1:1',
+            safetyFilterLevel: 'block_some',
+            personGeneration: 'allow_adult',
           },
-          body: JSON.stringify({
-            inputs: prompt,
-            parameters: {
-              num_inference_steps: 20,
-              width: 512,
-              height: 512,
-            },
-            options: {
-              wait_for_model: true,  // 等待模型加载，不报 503
-            }
-          }),
-        }
-      );
+        }),
+      }
+    );
 
-      console.log(`[API] ${model} response status:`, response.status);
+    if (!response.ok) {
+      const err = await response.text();
+      console.error('[IMG] Imagen API error:', response.status, err.substring(0, 300));
 
       if (response.status === 429) {
         return res.status(429).json({ error: 'Quota exceeded' });
       }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.warn(`[API] ${model} failed:`, response.status, errorText.substring(0, 200));
-        continue; // 尝试下一个模型
-      }
-
-      // 检查返回的是不是图片（有时候会返回 JSON 错误）
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('image')) {
-        const text = await response.text();
-        console.warn(`[API] ${model} returned non-image:`, text.substring(0, 200));
-        continue;
-      }
-
-      // 成功！转成 base64 返回
-      const arrayBuffer = await response.arrayBuffer();
-      const base64 = Buffer.from(arrayBuffer).toString('base64');
-      const dataUrl = `data:image/jpeg;base64,${base64}`;
-
-      console.log(`[API] ✅ Success with model: ${model}`);
-      return res.status(200).json({ image: dataUrl });
-
-    } catch (e: any) {
-      console.warn(`[API] ${model} error:`, e?.message);
-      continue;
+      return res.status(response.status).json({ error: 'Image generation failed' });
     }
-  }
 
-  // 所有模型都失败了
-  console.error("[API] All models failed");
-  return res.status(500).json({ error: 'All image models failed' });
+    const data = await response.json();
+    const base64 = data?.predictions?.[0]?.bytesBase64Encoded;
+
+    if (!base64) {
+      console.warn('[IMG] No image data in response');
+      return res.status(500).json({ error: 'No image data' });
+    }
+
+    const dataUrl = `data:image/png;base64,${base64}`;
+    console.log('[IMG] ✅ Image generated successfully');
+    return res.status(200).json({ image: dataUrl });
+
+  } catch (e: any) {
+    console.error('[IMG] Error:', e?.message);
+    return res.status(500).json({ error: e?.message });
+  }
 }
