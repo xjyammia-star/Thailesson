@@ -16,17 +16,19 @@ import { db, auth } from './lib/firebase';
 import { UserProfile, ThaiLesson, Difficulty, LearningFocus, AuxiliaryLanguage, AppAchievement } from './types';
 import { generateThaiLesson, generateImage, generateTTS, playBase64Audio, getAvailableKeys } from './services/gemini';
 
+const GCS_BASE = 'https://storage.googleapis.com/thailesson-image';
+
 const APP_ACHIEVEMENTS: AppAchievement[] = [
-  { id: 'bkk', province: { zh: '曼谷', en: 'Bangkok', th: 'กรุงเทพฯ' }, specialty: { zh: '大皇宫与玉佛寺', en: 'The Grand Palace', th: 'พระบรมมหาราชวัง' }, description: { zh: '泰国王室的象征，融合了泰式与欧式风格。', en: 'The symbolic heart of Bangkok, featuring the Emerald Buddha.', th: 'ศูนย์กลางทางจิตใจของปวงฃนชาวไทย' }, imagePrompt: '', specialtyImagePrompt: '', price: 100, buff: { type: 'points_multiplier', value: 1.01 } },
-  { id: 'aya', province: { zh: '大城', en: 'Ayutthaya', th: 'พระนครศรีอยุธยา' }, specialty: { zh: '玛哈泰寺树中佛', en: 'Buddha Head in Tree', th: 'เศียรพระในรากไม้' }, description: { zh: '大城王朝时期的遗迹，最著名的是被古树根紧紧包裹住的石佛头部。', en: 'An ancient world heritage site featuring the famous Buddha head in roots.', th: 'มรดกโลกที่ล้ำค่าในวัดมหาธาตุ' }, imagePrompt: '', specialtyImagePrompt: '', price: 350, buff: { type: 'points_multiplier', value: 1.02 } },
-  { id: 'kcn', province: { zh: '北碧', en: 'Kanchanaburi', th: 'กาญจนบุรี' }, specialty: { zh: '桂河大桥', en: 'Bridge on River Kwai', th: 'สะพานข้ามแม่น้ำแคว' }, description: { zh: '著名的二战历史遗迹，见证了历史的沧桑。', en: 'A historic WWII landmark over the jungle river.', th: 'สะพานเหล็กประวัติศาสตร์ในสงครามโลก' }, imagePrompt: '', specialtyImagePrompt: '', price: 1000, buff: { type: 'points_multiplier', value: 1.05 } },
-  { id: 'lpb', province: { zh: '华富里', en: 'Lopburi', th: 'ลพบุรี' }, specialty: { zh: '三峰塔与猴子', en: 'Phra Prang Sam Yod', th: 'พระปรางค์สามยอด' }, description: { zh: '古老的高棉风格遗迹，以成群结队的猴子闻名。', en: 'Ancient Khmer-style towers famous for hundreds of monkeys.', th: 'ปราสาทขอมโบราณและฝูงลิงที่เป็นเอกลักษณ์' }, imagePrompt: '', specialtyImagePrompt: '', price: 3000, buff: { type: 'points_multiplier', value: 1.10 } },
-  { id: 'pkt', province: { zh: '普吉', en: 'Phuket', th: 'ภูเก็ต' }, specialty: { zh: '中葡风情老城', en: 'Phuket Old Town', th: 'ย่านเมืองเก่าภูเก็ต' }, description: { zh: '保留了大量色彩斑斓的"中葡式建筑"。', en: 'A historic district featuring vibrant Sino-Portuguese shophouses.', th: 'ย่านตึกเก่าศิลปะชิโนโปรตุกีส' }, imagePrompt: '', specialtyImagePrompt: '', price: 10000, buff: { type: 'points_multiplier', value: 1.20 } },
-  { id: 'samui', province: { zh: '苏梅岛', en: 'Koh Samui', th: 'เกาะสมุย' }, specialty: { zh: '巨型大佛', en: 'Big Buddha Temple', th: 'วัดพระใหญ่' }, description: { zh: '坐落于小岛上的12米高金色大佛。', en: 'A 12-meter tall golden Buddha statue on a small island.', th: 'พระพุทธรูปทองคำขนาดใหญ่' }, imagePrompt: '', specialtyImagePrompt: '', price: 30000, buff: { type: 'points_multiplier', value: 1.35 } },
-  { id: 'cnx', province: { zh: '清迈', en: 'Chiang Mai', th: 'เชียงใหม่' }, specialty: { zh: '素帖寺', en: 'Wat Phra That Doi Suthep', th: 'วัดพระธาตุดอยสุเทพ' }, description: { zh: '清迈最神圣的寺庙，坐落于素帖山上。', en: "Chiang Mai's most sacred temple on a mountain.", th: 'วัดศักดิ์สิทธิ์บนดอยสุเทพ' }, imagePrompt: '', specialtyImagePrompt: '', price: 80000, buff: { type: 'points_multiplier', value: 1.60 } },
-  { id: 'skh', province: { zh: '素可泰', en: 'Sukhothai', th: 'สุโขทัย' }, specialty: { zh: '西昌寺大佛', en: 'Phra Achana', th: 'วัดศรีชุม' }, description: { zh: '素可泰王朝的艺术精髓，坐佛庄严神圣。', en: "Thailand's first capital with a massive seated Buddha.", th: 'พระอัจนะในวัดศรีชุม' }, imagePrompt: '', specialtyImagePrompt: '', price: 200000, buff: { type: 'points_multiplier', value: 2.00 } },
-  { id: 'kbi', province: { zh: '甲米', en: 'Krabi', th: 'กระบี่' }, specialty: { zh: '莱利海滩', en: 'Railay Beach', th: 'ไร่เลย์' }, description: { zh: '甲米以壮丽的喀斯特地貌闻名，莱利海滩是攀岩天堂。', en: 'Famous limestone karsts and a global rock-climbing destination.', th: 'หน้าผาหินปูนและหาดทรายขาว' }, imagePrompt: '', specialtyImagePrompt: '', price: 500000, buff: { type: 'points_multiplier', value: 3.00 } },
-  { id: 'loe', province: { zh: '黎府', en: 'Loei', th: 'เลย' }, specialty: { zh: '鬼脸节面具', en: 'Phi Ta Khon Mask', th: 'ผีตาโขน' }, description: { zh: '手工彩绘的面具有着夸张的鼻子和艳丽的图案。', en: 'Vibrant handmade masks from the Phi Ta Khon festival.', th: 'งานเทศกาลผีตาโขน' }, imagePrompt: '', specialtyImagePrompt: '', price: 1200000, buff: { type: 'points_multiplier', value: 5.00 } }
+  { id: 'bkk', province: { zh: '曼谷', en: 'Bangkok', th: 'กรุงเทพฯ' }, specialty: { zh: '大皇宫与玉佛寺', en: 'The Grand Palace', th: 'พระบรมมหาราชวัง' }, description: { zh: '泰国王室的象征，融合了泰式与欧式风格。', en: 'The symbolic heart of Bangkok, featuring the Emerald Buddha.', th: 'ศูนย์กลางทางจิตใจของปวงฃนชาวไทย' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_bkk.png`, price: 100, buff: { type: 'points_multiplier', value: 1.01 } },
+  { id: 'aya', province: { zh: '大城', en: 'Ayutthaya', th: 'พระนครศรีอยุธยา' }, specialty: { zh: '玛哈泰寺树中佛', en: 'Buddha Head in Tree', th: 'เศียรพระในรากไม้' }, description: { zh: '大城王朝时期的遗迹，最著名的是被古树根紧紧包裹住的石佛头部。', en: 'An ancient world heritage site featuring the famous Buddha head in roots.', th: 'มรดกโลกที่ล้ำค่าในวัดมหาธาตุ' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_aya.png`, price: 350, buff: { type: 'points_multiplier', value: 1.02 } },
+  { id: 'kcn', province: { zh: '北碧', en: 'Kanchanaburi', th: 'กาญจนบุรี' }, specialty: { zh: '桂河大桥', en: 'Bridge on River Kwai', th: 'สะพานข้ามแม่น้ำแคว' }, description: { zh: '著名的二战历史遗迹，见证了历史的沧桑。', en: 'A historic WWII landmark over the jungle river.', th: 'สะพานเหล็กประวัติศาสตร์ในสงครามโลก' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_kcn.png`, price: 1000, buff: { type: 'points_multiplier', value: 1.05 } },
+  { id: 'lpb', province: { zh: '华富里', en: 'Lopburi', th: 'ลพบุรี' }, specialty: { zh: '三峰塔与猴子', en: 'Phra Prang Sam Yod', th: 'พระปรางค์สามยอด' }, description: { zh: '古老的高棉风格遗迹，以成群结队的猴子闻名。', en: 'Ancient Khmer-style towers famous for hundreds of monkeys.', th: 'ปราสาทขอมโบราณและฝูงลิงที่เป็นเอกลักษณ์' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_lpb.png`, price: 3000, buff: { type: 'points_multiplier', value: 1.10 } },
+  { id: 'pkt', province: { zh: '普吉', en: 'Phuket', th: 'ภูเก็ต' }, specialty: { zh: '中葡风情老城', en: 'Phuket Old Town', th: 'ย่านเมืองเก่าภูเก็ต' }, description: { zh: '保留了大量色彩斑斓的"中葡式建筑"。', en: 'A historic district featuring vibrant Sino-Portuguese shophouses.', th: 'ย่านตึกเก่าศิลปะชิโนโปรตุกีส' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_pkt.png`, price: 10000, buff: { type: 'points_multiplier', value: 1.20 } },
+  { id: 'samui', province: { zh: '苏梅岛', en: 'Koh Samui', th: 'เกาะสมุย' }, specialty: { zh: '巨型大佛', en: 'Big Buddha Temple', th: 'วัดพระใหญ่' }, description: { zh: '坐落于小岛上的12米高金色大佛。', en: 'A 12-meter tall golden Buddha statue on a small island.', th: 'พระพุทธรูปทองคำขนาดใหญ่' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_samui.png`, price: 30000, buff: { type: 'points_multiplier', value: 1.35 } },
+  { id: 'cnx', province: { zh: '清迈', en: 'Chiang Mai', th: 'เชียงใหม่' }, specialty: { zh: '素帖寺', en: 'Wat Phra That Doi Suthep', th: 'วัดพระธาตุดอยสุเทพ' }, description: { zh: '清迈最神圣的寺庙，坐落于素帖山上。', en: "Chiang Mai's most sacred temple on a mountain.", th: 'วัดศักดิ์สิทธิ์บนดอยสุเทพ' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_cnx.png`, price: 80000, buff: { type: 'points_multiplier', value: 1.60 } },
+  { id: 'skh', province: { zh: '素可泰', en: 'Sukhothai', th: 'สุโขทัย' }, specialty: { zh: '西昌寺大佛', en: 'Phra Achana', th: 'วัดศรีชุม' }, description: { zh: '素可泰王朝的艺术精髓，坐佛庄严神圣。', en: "Thailand's first capital with a massive seated Buddha.", th: 'พระอัจนะในวัดศรีชุม' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_skh.png`, price: 200000, buff: { type: 'points_multiplier', value: 2.00 } },
+  { id: 'kbi', province: { zh: '甲米', en: 'Krabi', th: 'กระบี่' }, specialty: { zh: '莱利海滩', en: 'Railay Beach', th: 'ไร่เลย์' }, description: { zh: '甲米以壮丽的喀斯特地貌闻名，莱利海滩是攀岩天堂。', en: 'Famous limestone karsts and a global rock-climbing destination.', th: 'หน้าผาหินปูนและหาดทรายขาว' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_kbi.png`, price: 500000, buff: { type: 'points_multiplier', value: 3.00 } },
+  { id: 'loe', province: { zh: '黎府', en: 'Loei', th: 'เลย' }, specialty: { zh: '鬼脸节面具', en: 'Phi Ta Khon Mask', th: 'ผีตาโขน' }, description: { zh: '手工彩绘的面具有着夸张的鼻子和艳丽的图案。', en: 'Vibrant handmade masks from the Phi Ta Khon festival.', th: 'งานเทศกาลผีตาโขน' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_loe.png`, price: 1200000, buff: { type: 'points_multiplier', value: 5.00 } }
 ];
 
 export default function App() {
@@ -46,28 +48,18 @@ export default function App() {
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [showResults, setShowResults] = useState(false);
   const [showExerciseTranslations, setShowExerciseTranslations] = useState<Record<number, boolean>>({});
-
   const [selectedKeyIndex, setSelectedKeyIndex] = useState<number>(() => {
     const saved = localStorage.getItem('sawasdee_key_index');
     return saved ? parseInt(saved) : 1;
   });
-
   const [speechRate, setSpeechRate] = useState<number>(() => {
     const saved = localStorage.getItem('sawasdee_speech_rate');
     return saved ? parseFloat(saved) : 0.85;
   });
 
   const availableKeys = getAvailableKeys();
-
-  const handleKeySelect = (index: number) => {
-    setSelectedKeyIndex(index);
-    localStorage.setItem('sawasdee_key_index', String(index));
-  };
-
-  const handleSpeechRateChange = (rate: number) => {
-    setSpeechRate(rate);
-    localStorage.setItem('sawasdee_speech_rate', String(rate));
-  };
+  const handleKeySelect = (index: number) => { setSelectedKeyIndex(index); localStorage.setItem('sawasdee_key_index', String(index)); };
+  const handleSpeechRateChange = (rate: number) => { setSpeechRate(rate); localStorage.setItem('sawasdee_speech_rate', String(rate)); };
 
   const profileRef = useRef(profile);
   useEffect(() => { profileRef.current = profile; }, [profile]);
@@ -80,11 +72,7 @@ export default function App() {
         const today = new Date().toLocaleDateString();
         if (userDoc.exists()) {
           const cloudData = userDoc.data() as UserProfile;
-          if (cloudData.lastLessonDate !== today) {
-            cloudData.lessonsCompletedToday = 0;
-            cloudData.lastLessonDate = today;
-            await setDoc(doc(db, 'users', firebaseUser.uid), cloudData);
-          }
+          if (cloudData.lastLessonDate !== today) { cloudData.lessonsCompletedToday = 0; cloudData.lastLessonDate = today; await setDoc(doc(db, 'users', firebaseUser.uid), cloudData); }
           setProfile(cloudData);
         } else {
           const initialProfile: UserProfile = { ...profileRef.current, userId: firebaseUser.uid, lastLessonDate: today, lessonsCompletedToday: 0 };
@@ -98,74 +86,39 @@ export default function App() {
 
   const saveProfile = async (updated: UserProfile) => {
     setProfile(updated);
-    if (user) {
-      try { await setDoc(doc(db, 'users', user.uid), updated); }
-      catch (e) { console.error("Firebase save error", e); }
-    } else {
-      localStorage.setItem('sawasdee_profile', JSON.stringify(updated));
-    }
+    if (user) { try { await setDoc(doc(db, 'users', user.uid), updated); } catch (e) { console.error("Firebase save error", e); } }
+    else { localStorage.setItem('sawasdee_profile', JSON.stringify(updated)); }
   };
 
-  const handleLogin = async () => {
-    try { await signInWithPopup(auth, new GoogleAuthProvider()); }
-    catch (e) { console.error("Login failed", e); }
-  };
-
+  const handleLogin = async () => { try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { console.error("Login failed", e); } };
   const handleLogout = () => auth.signOut();
 
   const handleStart = async (isNext = false) => {
-    setStep('loading');
-    setError(null);
-    setLoadingText(currentT.loadingCrafting);
+    setStep('loading'); setError(null); setLoadingText(currentT.loadingCrafting);
     try {
       const nextCount = isNext ? lessonCount + 1 : 1;
       const generatedLesson = await generateThaiLesson(profile, nextCount, selectedKeyIndex);
-
       setLoadingText(currentT.loadingImages);
       const limitedVocab = generatedLesson.vocabulary.slice(0, 4);
       let quotaExceeded = false;
-
       const imagesToGenerate: { prompt: string, callback: (url: string) => void }[] = [];
-      limitedVocab.forEach(v => {
-        imagesToGenerate.push({ prompt: v.imagePrompt, callback: (url) => { v.imageUrl = url; } });
-      });
-      generatedLesson.exercise.forEach(ex => {
-        if (ex.question.imagePrompt) {
-          imagesToGenerate.push({ prompt: ex.question.imagePrompt, callback: (url) => { ex.question.imageUrl = url; } });
-        }
-      });
-
+      limitedVocab.forEach(v => { imagesToGenerate.push({ prompt: v.imagePrompt, callback: (url) => { v.imageUrl = url; } }); });
+      generatedLesson.exercise.forEach(ex => { if (ex.question.imagePrompt) { imagesToGenerate.push({ prompt: ex.question.imagePrompt, callback: (url) => { ex.question.imageUrl = url; } }); } });
       for (const item of imagesToGenerate) {
         if (quotaExceeded) break;
         try {
           const imageUrl = await generateImage(item.prompt);
-          if (imageUrl === "QUOTA_EXCEEDED") {
-            quotaExceeded = true;
-          } else if (imageUrl) {
-            item.callback(imageUrl);
-          }
+          if (imageUrl === "QUOTA_EXCEEDED") { quotaExceeded = true; } else if (imageUrl) { item.callback(imageUrl); }
           await new Promise(resolve => setTimeout(resolve, 500));
-        } catch (e) {
-          console.warn("Image generation failed:", e);
-        }
+        } catch (e) { console.warn("Image generation failed:", e); }
       }
-
       if (quotaExceeded) setError(currentT.quotaError);
-
       const finalLesson = { ...generatedLesson, vocabulary: limitedVocab };
-      setLesson(finalLesson);
-      setLessonCount(nextCount);
-      setStep('learning');
-      setShowResults(false);
-      setShowExerciseTranslations({});
-      setAnswers({});
-
+      setLesson(finalLesson); setLessonCount(nextCount); setStep('learning');
+      setShowResults(false); setShowExerciseTranslations({}); setAnswers({});
       const newWords = finalLesson.vocabulary.map(v => v.thai);
       setProfile(prev => ({ ...prev, pastVocabulary: [...new Set([...prev.pastVocabulary, ...newWords])] }));
-    } catch (err) {
-      setError('Failed to generate lesson. Please try again.');
-      setStep('setup');
-    }
+    } catch (err) { setError('Failed to generate lesson. Please try again.'); setStep('setup'); }
   };
 
   const calculateScore = () => {
@@ -176,16 +129,8 @@ export default function App() {
   };
 
   const unlockedCount = profile.unlockedAchievements?.length || 0;
-  const pointsMultiplier = APP_ACHIEVEMENTS
-    .filter(a => profile.unlockedAchievements?.includes(a.id))
-    .reduce((acc, curr) => acc + (curr.buff?.value ? curr.buff.value - 1 : 0), 1)
-    + (unlockedCount >= 10 ? 10.0 : (unlockedCount >= 9 ? 3.0 : (unlockedCount >= 5 ? 1.0 : 0)));
-
-  const calculatePointsReward = (goal: number, isStreak: boolean) => {
-    let base = goal === 1 ? 10 : goal === 3 ? 30 : goal === 5 ? 50 : 150;
-    if (goal === 10 && isStreak) base += 50;
-    return Math.round(base * pointsMultiplier);
-  };
+  const pointsMultiplier = APP_ACHIEVEMENTS.filter(a => profile.unlockedAchievements?.includes(a.id)).reduce((acc, curr) => acc + (curr.buff?.value ? curr.buff.value - 1 : 0), 1) + (unlockedCount >= 10 ? 10.0 : (unlockedCount >= 9 ? 3.0 : (unlockedCount >= 5 ? 1.0 : 0)));
+  const calculatePointsReward = (goal: number, isStreak: boolean) => { let base = goal === 1 ? 10 : goal === 3 ? 30 : goal === 5 ? 50 : 150; if (goal === 10 && isStreak) base += 50; return Math.round(base * pointsMultiplier); };
 
   const playAudio = async (text: string, speakText?: string) => {
     setAudioError(null);
@@ -193,34 +138,19 @@ export default function App() {
     try {
       setLoadingAudio(text);
       const base64Audio = await generateTTS(textToSpeak);
-      if (base64Audio) {
-        await playBase64Audio(base64Audio);
-        setLoadingAudio(null);
-        return;
-      }
+      if (base64Audio) { await playBase64Audio(base64Audio); setLoadingAudio(null); return; }
       const synth = window.speechSynthesis;
       if (!synth) { setAudioError(currentT.audioError); setLoadingAudio(null); return; }
       synth.cancel();
-      await new Promise<void>((resolve) => {
-        const v = synth.getVoices();
-        if (v.length > 0) resolve();
-        else { synth.onvoiceschanged = () => resolve(); setTimeout(resolve, 1000); }
-      });
+      await new Promise<void>((resolve) => { const v = synth.getVoices(); if (v.length > 0) resolve(); else { synth.onvoiceschanged = () => resolve(); setTimeout(resolve, 1000); } });
       const utterance = new SpeechSynthesisUtterance(textToSpeak);
-      utterance.lang = 'th-TH';
-      utterance.rate = speechRate;
-      utterance.pitch = 1.0;
-      utterance.volume = 1.0;
-      const voices = synth.getVoices();
-      const thaiVoice = voices.find(v => v.lang.startsWith('th'));
+      utterance.lang = 'th-TH'; utterance.rate = speechRate; utterance.pitch = 1.0; utterance.volume = 1.0;
+      const voices = synth.getVoices(); const thaiVoice = voices.find(v => v.lang.startsWith('th'));
       if (thaiVoice) utterance.voice = thaiVoice;
       utterance.onend = () => setLoadingAudio(null);
       utterance.onerror = () => { setLoadingAudio(null); setAudioError(currentT.playbackError); };
       synth.speak(utterance);
-    } catch (err) {
-      setLoadingAudio(null);
-      setAudioError(currentT.playbackError);
-    }
+    } catch (err) { setLoadingAudio(null); setAudioError(currentT.playbackError); }
   };
 
   const handleFinishLesson = async () => {
@@ -232,16 +162,18 @@ export default function App() {
     let updated = { ...profile, lessonsCompletedToday: completed, points: profile.points + baseReward };
     if (completed > 0 && completed % profile.dailyGoal === 0) {
       let newStreak = profile.streak;
-      if (profile.lastGoalCompletionDate !== today)
-        newStreak = profile.lastGoalCompletionDate === yesterday ? newStreak + 1 : 1;
+      if (profile.lastGoalCompletionDate !== today) newStreak = profile.lastGoalCompletionDate === yesterday ? newStreak + 1 : 1;
       const goalBonus = calculatePointsReward(profile.dailyGoal, newStreak > 1 && profile.dailyGoal === 10);
       updated = { ...updated, points: updated.points + goalBonus, streak: newStreak, lastGoalCompletionDate: today };
     }
-    await saveProfile(updated);
-    setShowResults(true);
+    await saveProfile(updated); setShowResults(true);
   };
 
   const isKid = profile.age === 'primary' || profile.age === 'middle' || (typeof profile.age === 'number' && profile.age < 12);
+  const todayCompleted = profile.lessonsCompletedToday || 0;
+  const todayGoal = profile.dailyGoal || 1;
+  const progressPercent = Math.min((todayCompleted / todayGoal) * 100, 100);
+  const goalReached = todayCompleted >= todayGoal;
 
   const t = {
     zh: {
@@ -255,8 +187,7 @@ export default function App() {
       dailyGoal: '今日目标', museum: '成就馆', museumTitle: '成就博物馆',
       apiKeyLabel: 'API Key 选择', speechRateLabel: '语音速度',
       speechRateSlow: '慢', speechRateNormal: '正常', speechRateFast: '快',
-      streakLabel: '连续学习天数', pointsLabel2: '积分',
-      todayProgress: '今日进度',
+      streakLabel: '连续天数', pointsLabel2: '积分', todayProgress: '今日进度',
       levels: { Foundations: '入门 (发音/字母)', Elementary: '初级 (基础词汇)', Intermediate: '中级 (日常对话)', Advanced: '高级 (地道表达)' },
       focuses: { Listening: '听力', Speaking: '口语', Reading: '阅读', Writing: '写作', Comprehensive: '综合' },
       focusDescriptions: { Listening: '核心：磨炼辨音与语调。', Speaking: '核心：模拟实战对话。', Reading: '核心：文字拆解与长句。', Writing: '核心：构词逻辑与翻译。', Comprehensive: '核心：平衡各维发展。' },
@@ -264,18 +195,15 @@ export default function App() {
       goalRewardLabel: (r: number) => `完成此目标可获得 ✧ ${r} 积分`,
       nextLesson: '下一课', keyVocab: '核心词汇', reading: '阅读训练', interactive: '互动练习',
       placeholderAnswer: '输入你的答案...', submit: '提交答案', correctAnswer: '正确答案',
-      culturalNote: '文化小贴士', progress: '学习进度',
-      milestone: (n: number) => `今日已完成 ${n} / ${profile.dailyGoal} 课时`,
+      culturalNote: '文化小贴士', milestone: (n: number) => `今日已完成 ${n} / ${profile.dailyGoal} 课时`,
       quotaError: '图像生成配额已用完，本课不显示图片。', audioError: '语音服务暂时不可用。', playbackError: '播放失败，请重试。',
       museumDesc: '通过辛勤学习解锁的泰式珍宝。', balance: '可用余额',
-      discoveryTitle: '泰国文化探索之旅',
-      discoveryProgress: (u: number, t: number, m: string) => `已解锁 ${u}/${t} 件珍宝，课程收益提升 x${m} 倍！`,
-      rewardRoyal: '👑 皇家奖赏 (+10.0x)', rewardExpert: '🌟 泰国通奖赏 (+3.0x)',
-      rewardExploring: '探索中...', rewardNovice: '初级奖励 (+1.0x)',
+      discoveryTitle: '泰国文化探索之旅', discoveryProgress: (u: number, t: number, m: string) => `已解锁 ${u}/${t} 件珍宝，课程收益提升 x${m} 倍！`,
       regions: { exploring: '初探泰国', southern: '南部风情', northern: '北部遗迹', ultimate: '终极艺术' },
-      pointsLabel: '积分', unlockWith: '解锁需要', login: '登录保存进度', logout: '退出', home: '首页',
+      pointsLabel: '积分', unlockWith: '解锁需要', login: '登录保存进度', home: '首页',
       goalReached: '目标达成！', perfectScore: '完美！', lessonDone: '完成！',
-      earned: '获得', returnHome: '返回首页', goalBonus: (r: number) => `目标达成奖励：+${r} 积分！`
+      earned: '获得', returnHome: '返回首页', goalBonus: (r: number) => `目标达成奖励：+${r} 积分！`,
+      locked: '未解锁', unlocked: '已解锁',
     },
     en: {
       setupTitle: 'Customize Your Thai Lesson', setupDesc: 'Tell AI your needs and we will generate the best content for you.',
@@ -288,8 +216,7 @@ export default function App() {
       dailyGoal: 'Daily Goal', museum: 'Museum', museumTitle: 'Museum of Achievements',
       apiKeyLabel: 'API Key', speechRateLabel: 'Speech Speed',
       speechRateSlow: 'Slow', speechRateNormal: 'Normal', speechRateFast: 'Fast',
-      streakLabel: 'Day streak', pointsLabel2: 'Points',
-      todayProgress: "Today's Progress",
+      streakLabel: 'Day streak', pointsLabel2: 'Points', todayProgress: "Today's Progress",
       levels: { Foundations: 'Foundations', Elementary: 'Elementary', Intermediate: 'Intermediate', Advanced: 'Advanced' },
       focuses: { Listening: 'Listening', Speaking: 'Speaking', Reading: 'Reading', Writing: 'Writing', Comprehensive: 'Comprehensive' },
       focusDescriptions: { Listening: 'Sharpen phoneme recognition.', Speaking: 'Simulate real dialogue.', Reading: 'Text decomposition.', Writing: 'Word construction.', Comprehensive: 'Balanced development.' },
@@ -297,18 +224,15 @@ export default function App() {
       goalRewardLabel: (r: number) => `Reward: ✧ ${r} points`,
       nextLesson: 'Next Lesson', keyVocab: 'Key Vocabulary', reading: 'Reading', interactive: 'Exercises',
       placeholderAnswer: 'Type your answer...', submit: 'Submit', correctAnswer: 'Correct Answer',
-      culturalNote: 'Cultural Note', progress: 'Progress',
-      milestone: (n: number) => `Today: ${n} / ${profile.dailyGoal} lessons done`,
+      culturalNote: 'Cultural Note', milestone: (n: number) => `Today: ${n} / ${profile.dailyGoal} lessons`,
       quotaError: 'Image quota exceeded.', audioError: 'Voice service unavailable.', playbackError: 'Playback failed.',
       museumDesc: 'Treasures unlocked through dedication.', balance: 'Balance',
-      discoveryTitle: 'Thailand Discovery',
-      discoveryProgress: (u: number, t: number, m: string) => `Unlocked ${u}/${t}. Earnings x${m}!`,
-      rewardRoyal: '👑 Royal Bonus (+10.0x)', rewardExpert: '🌟 Expert Bonus (+3.0x)',
-      rewardExploring: 'Exploring...', rewardNovice: 'Novice Bonus (+1.0x)',
+      discoveryTitle: 'Thailand Discovery', discoveryProgress: (u: number, t: number, m: string) => `Unlocked ${u}/${t}. Earnings x${m}!`,
       regions: { exploring: 'Beginning', southern: 'South', northern: 'North', ultimate: 'Ultimate' },
-      pointsLabel: 'Points', unlockWith: 'Unlock for', login: 'Sign in', logout: 'Sign out', home: 'Home',
+      pointsLabel: 'Points', unlockWith: 'Unlock for', login: 'Sign in', home: 'Home',
       goalReached: 'Goal reached!', perfectScore: 'Perfect!', lessonDone: 'Done!',
-      earned: 'Earned', returnHome: 'Return Home', goalBonus: (r: number) => `Goal Bonus: +${r} Points!`
+      earned: 'Earned', returnHome: 'Return Home', goalBonus: (r: number) => `Goal Bonus: +${r} Points!`,
+      locked: 'Locked', unlocked: 'Unlocked',
     },
     th: {
       setupTitle: 'ปรับแต่งบทเรียนของคุณ', setupDesc: 'บอก AI ความต้องการของคุณ',
@@ -321,8 +245,7 @@ export default function App() {
       dailyGoal: 'เป้าหมายรายวัน', museum: 'พิพิธภัณฑ์', museumTitle: 'พิพิธภัณฑ์',
       apiKeyLabel: 'API Key', speechRateLabel: 'ความเร็วเสียง',
       speechRateSlow: 'ช้า', speechRateNormal: 'ปกติ', speechRateFast: 'เร็ว',
-      streakLabel: 'วันต่อเนื่อง', pointsLabel2: 'คะแนน',
-      todayProgress: 'ความก้าวหน้าวันนี้',
+      streakLabel: 'วันต่อเนื่อง', pointsLabel2: 'คะแนน', todayProgress: 'ความก้าวหน้าวันนี้',
       levels: { Foundations: 'พื้นฐาน', Elementary: 'เริ่มต้น', Intermediate: 'กลาง', Advanced: 'สูง' },
       focuses: { Listening: 'ฟัง', Speaking: 'พูด', Reading: 'อ่าน', Writing: 'เขียน', Comprehensive: 'ครอบคลุม' },
       focusDescriptions: { Listening: 'ฝึกการฟัง', Speaking: 'ฝึกการพูด', Reading: 'ฝึกการอ่าน', Writing: 'ฝึกการเขียน', Comprehensive: 'ครอบคลุมทุกด้าน' },
@@ -330,28 +253,19 @@ export default function App() {
       goalRewardLabel: (r: number) => `รางวัล: ✧ ${r} คะแนน`,
       nextLesson: 'บทถัดไป', keyVocab: 'คำศัพท์', reading: 'อ่าน', interactive: 'แบบฝึกหัด',
       placeholderAnswer: 'พิมพ์คำตอบ...', submit: 'ส่ง', correctAnswer: 'คำตอบที่ถูก',
-      culturalNote: 'บันทึกวัฒนธรรม', progress: 'ความก้าวหน้า',
-      milestone: (n: number) => `วันนี้: ${n} / ${profile.dailyGoal} บท`,
+      culturalNote: 'บันทึกวัฒนธรรม', milestone: (n: number) => `วันนี้: ${n} / ${profile.dailyGoal} บท`,
       quotaError: 'โควตาภาพหมด', audioError: 'เสียงไม่พร้อม', playbackError: 'เล่นไม่ได้',
       museumDesc: 'ขุมทรัพย์ที่ปลดล็อกแล้ว', balance: 'ยอดคงเหลือ',
-      discoveryTitle: 'สำรวจไทย',
-      discoveryProgress: (u: number, t: number, m: string) => `ปลดล็อก ${u}/${t} x${m}!`,
-      rewardRoyal: '👑 รางวัลพระราชวัง', rewardExpert: '🌟 ผู้เชี่ยวชาญ',
-      rewardExploring: 'กำลังสำรวจ...', rewardNovice: 'รางวัลเริ่มต้น',
+      discoveryTitle: 'สำรวจไทย', discoveryProgress: (u: number, t: number, m: string) => `ปลดล็อก ${u}/${t} x${m}!`,
       regions: { exploring: 'เริ่มต้น', southern: 'ใต้', northern: 'เหนือ', ultimate: 'สุดยอด' },
-      pointsLabel: 'คะแนน', unlockWith: 'ปลดล็อก', login: 'เข้าสู่ระบบ', logout: 'ออก', home: 'หน้าแรก',
+      pointsLabel: 'คะแนน', unlockWith: 'ปลดล็อก', login: 'เข้าสู่ระบบ', home: 'หน้าแรก',
       goalReached: 'ถึงเป้าหมาย!', perfectScore: 'สมบูรณ์แบบ!', lessonDone: 'เสร็จแล้ว!',
-      earned: 'ได้รับ', returnHome: 'กลับหน้าแรก', goalBonus: (r: number) => `โบนัส: +${r} คะแนน!`
+      earned: 'ได้รับ', returnHome: 'กลับหน้าแรก', goalBonus: (r: number) => `โบนัส: +${r} คะแนน!`,
+      locked: 'ยังไม่ปลดล็อก', unlocked: 'ปลดล็อกแล้ว',
     }
   };
 
   const currentT = t[profile.auxiliaryLanguage === 'th' ? 'th' : profile.auxiliaryLanguage === 'en' ? 'en' : 'zh'];
-
-  // ✅ 今日进度计算
-  const todayCompleted = profile.lessonsCompletedToday || 0;
-  const todayGoal = profile.dailyGoal || 1;
-  const progressPercent = Math.min((todayCompleted / todayGoal) * 100, 100);
-  const goalReached = todayCompleted >= todayGoal;
 
   const MuseumView = () => {
     const [mLang, setMLang] = useState<'zh' | 'en' | 'th'>('zh');
@@ -367,6 +281,7 @@ export default function App() {
     const uCount = profile.unlockedAchievements.length;
     const dTarget = uCount >= 9 ? 10 : uCount >= 5 ? 9 : 5;
     const mPct = (uCount / dTarget) * 100;
+
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-10 pb-32">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
@@ -392,6 +307,7 @@ export default function App() {
             </div>
           </div>
         </div>
+
         <div className="bg-thai-blue p-8 rounded-[2.5rem] border border-white/5 relative overflow-hidden">
           <div className="absolute top-0 right-0 p-8 opacity-5"><Gamepad2 size={120} /></div>
           <div className="relative z-10 flex flex-col md:flex-row items-center gap-8">
@@ -408,6 +324,7 @@ export default function App() {
             </div>
           </div>
         </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {APP_ACHIEVEMENTS.map((ach, idx) => {
             const unlocked = profile.unlockedAchievements.includes(ach.id);
@@ -421,15 +338,20 @@ export default function App() {
                   <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${tierColor}`}>{regionName}</span>
                   {!unlocked && <span className="px-3 py-1 bg-white/5 rounded-full text-[10px] font-black text-slate-400">✧ {ach.price.toLocaleString()}</span>}
                 </div>
+
+                {/* ✅ 已解锁：显示真实GCS图片；未解锁：显示模糊占位符 */}
                 <div className="relative w-full aspect-square rounded-3xl overflow-hidden bg-white/5">
-                  <img src={`https://api.dicebear.com/7.x/shapes/svg?seed=${ach.id}&backgroundColor=0b1120`} alt="" className={`w-full h-full object-cover p-8 ${!unlocked ? 'opacity-20 blur-sm' : ''}`} />
-                  {!unlocked && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <Sparkles size={40} className="opacity-10 animate-pulse mb-2" />
-                      <p className="text-[10px] font-black uppercase text-white/20">{mLang === 'zh' ? '未探索' : mLang === 'th' ? 'ซ่อน' : 'Hidden'}</p>
+                  {unlocked && ach.specialtyImagePrompt ? (
+                    <img src={ach.specialtyImagePrompt} alt={ach.specialty[mLang]} className="w-full h-full object-cover"
+                      onError={(e) => { (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/shapes/svg?seed=${ach.id}&backgroundColor=0b1120`; }} />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-br from-white/5 to-white/10 flex flex-col items-center justify-center">
+                      <Sparkles size={48} className="opacity-10 animate-pulse mb-3" />
+                      <p className="text-[10px] font-black uppercase text-white/20 tracking-widest">{mT.locked}</p>
                     </div>
                   )}
                 </div>
+
                 <div className="flex-1 flex flex-col gap-2">
                   <h3 className={`text-lg font-black ${unlocked ? 'text-white' : 'text-slate-500'}`}>{unlocked ? ach.specialty[mLang] : ach.province[mLang]}</h3>
                   <p className={`text-sm leading-relaxed ${unlocked ? 'text-slate-300' : 'text-slate-600 italic'}`}>
@@ -437,7 +359,7 @@ export default function App() {
                   </p>
                   {unlocked ? (
                     <div className="mt-auto pt-3 border-t border-white/5 flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-green-400"><CheckCircle2 size={14} /><span className="text-[10px] font-black uppercase">{mLang === 'zh' ? '已解锁' : mLang === 'th' ? 'ปลดล็อก' : 'Unlocked'}</span></div>
+                      <div className="flex items-center gap-2 text-green-400"><CheckCircle2 size={14} /><span className="text-[10px] font-black uppercase">{mT.unlocked}</span></div>
                       <span className="text-[10px] font-black text-thai-gold bg-thai-gold/10 px-2 py-1 rounded-lg">x{ach.buff?.value.toFixed(2)}</span>
                     </div>
                   ) : (
@@ -469,21 +391,13 @@ export default function App() {
           <div className="flex items-center gap-3">
             {user && (
               <div className="flex items-center gap-3 px-3 py-2 bg-white/5 rounded-2xl border border-white/10">
-                {/* ✅ 连续天数说明 */}
-                <div className="flex flex-col items-center" title={currentT.streakLabel}>
-                  <div className="flex items-center gap-1">
-                    <Flame size={14} className="text-amber-500" />
-                    <span className="text-sm font-bold text-thai-gold">{profile.streak || 0}</span>
-                  </div>
+                <div className="flex flex-col items-center">
+                  <div className="flex items-center gap-1"><Flame size={14} className="text-amber-500" /><span className="text-sm font-bold text-thai-gold">{profile.streak || 0}</span></div>
                   <span className="text-[9px] text-slate-500 uppercase tracking-tight hidden md:block">{currentT.streakLabel}</span>
                 </div>
                 <div className="w-px h-6 bg-white/10" />
-                {/* ✅ 积分说明 */}
-                <div className="flex flex-col items-center" title={currentT.pointsLabel2}>
-                  <div className="flex items-center gap-1">
-                    <Trophy size={14} className="text-thai-gold" />
-                    <span className="text-sm font-bold text-slate-300">{profile.points || 0}</span>
-                  </div>
+                <div className="flex flex-col items-center">
+                  <div className="flex items-center gap-1"><Trophy size={14} className="text-thai-gold" /><span className="text-sm font-bold text-slate-300">{profile.points || 0}</span></div>
                   <span className="text-[9px] text-slate-500 uppercase tracking-tight hidden md:block">{currentT.pointsLabel2}</span>
                 </div>
               </div>
@@ -520,28 +434,15 @@ export default function App() {
                 <h2 className="text-4xl font-display font-black mb-4 text-white uppercase tracking-tight">{currentT.setupTitle}</h2>
                 <p className="text-slate-400">{currentT.setupDesc}</p>
               </div>
-
-              {/* ✅ 今日进度条 */}
               <div className="bg-thai-blue rounded-3xl p-6 mb-6 border border-white/5">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-sm font-black text-slate-400 uppercase tracking-widest">{currentT.todayProgress}</span>
-                  <span className={`text-sm font-black ${goalReached ? 'text-green-400' : 'text-thai-gold'}`}>
-                    {todayCompleted} / {todayGoal} {profile.auxiliaryLanguage === 'zh' ? '课时' : profile.auxiliaryLanguage === 'th' ? 'บท' : 'lessons'}
-                    {goalReached && ' ✓'}
-                  </span>
+                  <span className={`text-sm font-black ${goalReached ? 'text-green-400' : 'text-thai-gold'}`}>{todayCompleted} / {todayGoal} {profile.auxiliaryLanguage === 'zh' ? '课时' : profile.auxiliaryLanguage === 'th' ? 'บท' : 'lessons'}{goalReached && ' ✓'}</span>
                 </div>
                 <div className="h-3 bg-white/5 rounded-full overflow-hidden border border-white/5">
-                  <motion.div
-                    className={`h-full rounded-full transition-all duration-1000 ${goalReached ? 'bg-green-400' : 'bg-thai-gold'}`}
-                    initial={{ width: 0 }}
-                    animate={{ width: `${progressPercent}%` }}
-                  />
+                  <motion.div className={`h-full rounded-full transition-all duration-1000 ${goalReached ? 'bg-green-400' : 'bg-thai-gold'}`} initial={{ width: 0 }} animate={{ width: `${progressPercent}%` }} />
                 </div>
-                {goalReached && (
-                  <p className="text-xs text-green-400 font-bold mt-2 text-center">
-                    {currentT.goalReached} 🎉
-                  </p>
-                )}
+                {goalReached && <p className="text-xs text-green-400 font-bold mt-2 text-center">{currentT.goalReached} 🎉</p>}
               </div>
 
               <div className="bg-thai-blue rounded-[3rem] p-10 shadow-2xl border border-white/5 space-y-8">
@@ -565,7 +466,6 @@ export default function App() {
                     </select>
                   </div>
                 </div>
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest"><Settings size={16} className="text-thai-gold" />{currentT.difficulty}</label>
@@ -588,7 +488,6 @@ export default function App() {
                     <p className="text-[12px] text-slate-400 italic px-1">{currentT.focusDescriptions[profile.focus]}</p>
                   </div>
                 </div>
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest"><CheckCircle2 size={16} className="text-thai-gold" />{currentT.dailyGoal}</label>
@@ -605,23 +504,15 @@ export default function App() {
                     <input type="text" value={profile.topic} onChange={(e) => setProfile({ ...profile, topic: e.target.value })} placeholder={currentT.topicPlaceholder} className="w-full px-5 py-4 rounded-2xl bg-white/5 border border-white/10 outline-none font-bold text-white placeholder:text-slate-600" />
                   </div>
                 </div>
-
-                {/* 语音速度 */}
                 <div className="space-y-2">
-                  <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest">
-                    <Volume2 size={16} className="text-thai-gold" />{currentT.speechRateLabel}
-                  </label>
+                  <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest"><Volume2 size={16} className="text-thai-gold" />{currentT.speechRateLabel}</label>
                   <div className="flex gap-3">
                     {[{ rate: 0.6, label: currentT.speechRateSlow }, { rate: 0.85, label: currentT.speechRateNormal }, { rate: 1.1, label: currentT.speechRateFast }].map(({ rate, label }) => (
                       <button key={rate} onClick={() => handleSpeechRateChange(rate)}
-                        className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all border-2 ${speechRate === rate ? 'bg-thai-gold text-thai-navy border-thai-gold' : 'bg-white/5 text-slate-300 border-white/10 hover:border-white/30'}`}>
-                        {label}
-                      </button>
+                        className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all border-2 ${speechRate === rate ? 'bg-thai-gold text-thai-navy border-thai-gold' : 'bg-white/5 text-slate-300 border-white/10 hover:border-white/30'}`}>{label}</button>
                     ))}
                   </div>
                 </div>
-
-                {/* API Key 选择 */}
                 <div className="space-y-2">
                   <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest"><Key size={16} className="text-thai-gold" />{currentT.apiKeyLabel}</label>
                   <div className="flex gap-3">
@@ -634,7 +525,6 @@ export default function App() {
                     {availableKeys.every(k => !k.available) && <p className="text-sm text-red-400 font-bold">未检测到 API Key</p>}
                   </div>
                 </div>
-
                 <button onClick={() => handleStart()} className="w-full bg-thai-gold hover:scale-[1.02] active:scale-95 text-thai-navy font-black py-5 rounded-[2rem] shadow-xl transition-all flex items-center justify-center gap-2 group">
                   {currentT.generateBtn}<ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
                 </button>
@@ -658,7 +548,6 @@ export default function App() {
 
           {step === 'learning' && lesson && (
             <motion.div key="learning" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8">
-              {/* ✅ 顶部移除"下一课"按钮 */}
               <div className={`p-10 rounded-[2.5rem] shadow-2xl ${isKid ? 'bg-gradient-to-br from-amber-400 to-orange-500' : 'bg-thai-blue border border-white/5'}`}>
                 <div className="flex items-center justify-between mb-6">
                   <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase border ${isKid ? 'bg-black/10 border-black/10 text-thai-navy' : 'bg-white/5 border-white/10 text-white'}`}>
@@ -674,7 +563,6 @@ export default function App() {
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 space-y-8">
-                  {/* 词汇卡片 */}
                   <section className="bg-thai-blue rounded-[2.5rem] p-10 shadow-xl border border-white/5">
                     <div className="flex items-center justify-between mb-8">
                       <h3 className="text-2xl font-display font-black flex items-center gap-2 text-white uppercase"><Sparkles size={24} className="text-thai-gold" />{currentT.keyVocab}</h3>
@@ -708,7 +596,6 @@ export default function App() {
                     </div>
                   </section>
 
-                  {/* 阅读 */}
                   <section className="bg-thai-blue rounded-[2.5rem] p-10 shadow-xl border border-white/5">
                     <h3 className="text-2xl font-display font-black mb-8 flex items-center gap-2 text-white uppercase"><BookOpen size={24} className="text-thai-gold" />{currentT.reading}</h3>
                     <div className="space-y-6">
@@ -726,7 +613,6 @@ export default function App() {
                     </div>
                   </section>
 
-                  {/* 练习 */}
                   <section className="bg-thai-blue rounded-[2.5rem] p-10 shadow-xl border border-white/5">
                     <h3 className="text-2xl font-display font-black mb-8 flex items-center gap-2 text-white uppercase"><Gamepad2 size={24} className="text-thai-gold" />{currentT.interactive}</h3>
                     <div className="space-y-10">
@@ -783,28 +669,20 @@ export default function App() {
                         </div>
                       ))}
                     </div>
-
                     {!showResults ? (
                       <button onClick={handleFinishLesson} className="mt-10 w-full py-5 bg-thai-gold text-thai-navy font-black rounded-3xl hover:bg-white transition-all active:scale-95">{currentT.submit}</button>
                     ) : (
-                      // ✅ 提交后显示结果 + 下一课按钮
                       <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mt-10 p-10 bg-thai-blue rounded-[3rem] border-2 border-thai-gold text-center space-y-5">
                         <div className="w-16 h-16 bg-thai-gold/10 text-thai-gold rounded-[2rem] flex items-center justify-center mx-auto"><CheckCircle2 size={36} /></div>
-                        <h3 className="text-2xl font-display font-black text-white uppercase">
-                          {calculateScore() === 100 ? currentT.perfectScore : currentT.lessonDone}
-                        </h3>
-                        <p className="text-slate-400 font-bold">
-                          {currentT.earned} <span className="text-thai-gold font-black">✧ {Math.round((calculateScore() / 10) * pointsMultiplier)}</span> {currentT.pointsLabel}
-                        </p>
+                        <h3 className="text-2xl font-display font-black text-white uppercase">{calculateScore() === 100 ? currentT.perfectScore : currentT.lessonDone}</h3>
+                        <p className="text-slate-400 font-bold">{currentT.earned} <span className="text-thai-gold font-black">✧ {Math.round((calculateScore() / 10) * pointsMultiplier)}</span> {currentT.pointsLabel}</p>
                         {profile.lessonsCompletedToday % profile.dailyGoal === 0 && (
                           <motion.div initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.3 }}
-                            className="p-4 bg-thai-gold text-thai-navy rounded-2xl text-sm font-black flex items-center justify-center gap-2 uppercase">
-                            <Sparkles size={18} />
-                            {currentT.goalBonus(calculatePointsReward(profile.dailyGoal, profile.streak > 1 && profile.dailyGoal === 10))}
+                            className="p-4 bg-thai-gold text-thai-navy rounded-2xl text-sm font-black flex items-center justify-center gap-2">
+                            <Sparkles size={18} />{currentT.goalBonus(calculatePointsReward(profile.dailyGoal, profile.streak > 1 && profile.dailyGoal === 10))}
                           </motion.div>
                         )}
                         <div className="flex flex-col gap-3 pt-2">
-                          {/* ✅ 下一课按钮移到这里 */}
                           <button onClick={() => handleStart(true)} className="w-full py-4 bg-thai-gold text-thai-navy font-black rounded-2xl hover:bg-white transition-all active:scale-95 flex items-center justify-center gap-2">
                             {currentT.nextLesson} <ChevronRight size={18} />
                           </button>
@@ -824,19 +702,15 @@ export default function App() {
                       <p className="text-slate-200 text-sm leading-relaxed italic">{lesson.culturalNote}</p>
                     </section>
                   )}
-                  {/* ✅ 侧边进度卡片 */}
                   <section className="bg-thai-blue rounded-[2.5rem] p-8 border border-white/5">
                     <h4 className="font-black mb-5 text-white uppercase tracking-widest text-sm">{currentT.todayProgress}</h4>
                     <div className="space-y-3">
                       <div className="flex justify-between text-[10px] font-black text-slate-400 uppercase">
                         <span>{currentT.focuses[profile.focus]}</span>
-                        <span className={goalReached ? 'text-green-400' : 'text-thai-gold'}>
-                          {todayCompleted} / {todayGoal}
-                        </span>
+                        <span className={goalReached ? 'text-green-400' : 'text-thai-gold'}>{todayCompleted} / {todayGoal}</span>
                       </div>
                       <div className="h-3 bg-white/5 rounded-full overflow-hidden border border-white/5">
-                        <div className={`h-full rounded-full transition-all duration-1000 ${goalReached ? 'bg-green-400' : 'bg-thai-gold'}`}
-                          style={{ width: `${progressPercent}%` }} />
+                        <div className={`h-full rounded-full transition-all duration-1000 ${goalReached ? 'bg-green-400' : 'bg-thai-gold'}`} style={{ width: `${progressPercent}%` }} />
                       </div>
                       <p className="text-[11px] text-slate-500 font-bold uppercase">{currentT.milestone(todayCompleted)}</p>
                     </div>
