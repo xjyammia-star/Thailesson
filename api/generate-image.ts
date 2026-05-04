@@ -58,9 +58,12 @@ export default async function handler(req: any, res: any) {
     console.log('[IMG] Getting access token...');
     const accessToken = await getAccessToken(serviceAccountJson);
 
-    console.log('[IMG] Calling Imagen 4 Fast for:', prompt.substring(0, 60));
+    // ✅ 在 prompt 里加入限制，避免触发儿童/人脸安全过滤器
+    // 泰语学习 app 的图片只需要展示物品、场景、概念，不需要人物
+    const safePrompt = `${prompt}, no people, no faces, no children, objects and scenery only, flat illustration style`;
 
-    // ✅ 修正：使用正确的模型名 imagen-4.0-fast-generate-001
+    console.log('[IMG] Calling Imagen 4 Fast for:', safePrompt.substring(0, 80));
+
     const response = await fetch(
       `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/imagen-4.0-fast-generate-001:predict`,
       {
@@ -70,12 +73,12 @@ export default async function handler(req: any, res: any) {
           'Authorization': `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
-          instances: [{ prompt }],
+          instances: [{ prompt: safePrompt }],
           parameters: {
             sampleCount: 1,
             aspectRatio: '1:1',
             safetyFilterLevel: 'block_some',
-            personGeneration: 'allow_adult',
+            personGeneration: 'dont_allow', // ✅ 不生成人物，避免儿童过滤
           },
         }),
       }
@@ -92,8 +95,9 @@ export default async function handler(req: any, res: any) {
     const base64 = data?.predictions?.[0]?.bytesBase64Encoded;
 
     if (!base64) {
-      console.warn('[IMG] No image data in response:', JSON.stringify(data).substring(0, 200));
-      return res.status(500).json({ error: 'No image data' });
+      const filteredReason = data?.predictions?.[0]?.raiFilteredReason;
+      console.warn('[IMG] No image data. Filter reason:', filteredReason || 'unknown');
+      return res.status(500).json({ error: 'No image data', reason: filteredReason });
     }
 
     console.log('[IMG] ✅ Image generated successfully!');
