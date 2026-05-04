@@ -1,6 +1,7 @@
 // api/generate-image.ts
 // 使用 Google 服务账号认证调用 Vertex AI Imagen 4
 // 带 Google Cloud Storage 缓存：同一词汇只生成一次图片
+// 所有图片强制使用卡通动物风格，避免人物过滤
 
 async function getAccessToken(serviceAccountJson: string): Promise<string> {
   const sa = JSON.parse(serviceAccountJson);
@@ -85,60 +86,22 @@ async function saveToCache(accessToken: string, bucket: string, key: string, bas
   }
 }
 
-function getRandomAnimal(): string {
-  const animals = [
-    'a cute cartoon elephant',
-    'a cute cartoon monkey',
-    'a cute cartoon rabbit',
-    'a cute cartoon cat',
-    'a cute cartoon dog',
-    'a cute cartoon bird',
-    'a cute cartoon frog',
-    'a cute cartoon bear',
-    'a cute cartoon panda',
-    'a cute cartoon tiger',
-  ];
-  return animals[Math.floor(Math.random() * animals.length)];
-}
-
-function getRandomAnimalGroup(): string {
-  const groups = [
-    'a cute cartoon animal family',
-    'cute cartoon animals together',
-    'a group of cute cartoon animals',
-    'cute cartoon forest animals',
-  ];
-  return groups[Math.floor(Math.random() * groups.length)];
-}
-
+// ✅ 核心策略：不管原始 prompt 是什么内容，
+// 统一用卡通动物角色风格包装，从根本上避免人物过滤
 function buildAnimalPrompt(prompt: string): string {
-  let transformed = prompt;
-
-  // ✅ 替换家庭/群体词汇（用动物群体）
-  transformed = transformed.replace(
-    /\b(Thai\s+)?(family|families|couple|parents?|mother|father|mom|dad|sister|brother|siblings?|grandma|grandpa|grandfather|grandmother|ancestor|relative|villager[s]?)\b/gi,
-    getRandomAnimalGroup()
-  );
-
-  // 替换单个人物词汇（用单个动物）
-  const animal = getRandomAnimal();
-  transformed = transformed
-    .replace(/\b(a\s+)?(cheerful|happy|smiling|cute|young|little|small|old|elderly|pretty|handsome|beautiful)?\s*(Thai\s+)?(child|children|kid|kids|boy|girl|baby|toddler|student|person|people|man|woman|men|women|monk|teacher|vendor|seller|farmer|worker|chef|doctor|nurse|soldier|policeman|athlete)\b(\s+around\s+\d+(\s+years?\s+old)?)?/gi, animal)
-    .replace(/\b(child|children|kid|kids|boy|girl|baby|toddler|student|person|people|man|woman|men|women|human|figure|monk|teacher|vendor|seller|farmer|worker|chef|doctor|nurse)\b/gi, animal)
-    .replace(/\baround\s+\d+(\s*-\s*\d+)?\s*(year[s]?\s+old|yo)\b/gi, '')
-    // 替换 "his/her/their" 等人称代词
-    .replace(/\b(his|her|their|him|them|they|he|she)\b/gi, 'its')
-    // 替换 photorealistic 为 cartoon（避免真实人脸风格）
-    .replace(/\bphotorealistic\b/gi, 'cartoon illustration')
-    .replace(/\brealistic\b/gi, 'illustrated')
+  // 提取原始 prompt 的核心概念（去掉画风描述词，保留主题）
+  const cleanedPrompt = prompt
+    .replace(/\bphotorealistic\b/gi, '')
+    .replace(/\bhigh.quality\b/gi, '')
+    .replace(/\b3D render\b/gi, '')
+    .replace(/\bprofessional photo\b/gi, '')
+    .replace(/\bscenic\b/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
 
-  if (transformed.length < 15) {
-    transformed = `${animal} in a Thai setting`;
-  }
-
-  return `${transformed}, cute cartoon style, flat illustration, colorful, Thai cultural aesthetic, no real people, no human faces`;
+  // 强制前缀：卡通动物角色风格
+  // 这个前缀会覆盖所有人物描述，因为 Imagen 会优先遵循开头的风格指令
+  return `Cute cartoon animal characters illustration style: ${cleanedPrompt}. All characters must be cartoon animals (elephant, rabbit, cat, dog, bear, etc.), no real humans, no real faces, no children, kawaii flat illustration, colorful, Thai cultural elements, white background`;
 }
 
 export default async function handler(req: any, res: any) {
@@ -171,7 +134,7 @@ export default async function handler(req: any, res: any) {
 
     // 缓存未命中，生成图片
     const safePrompt = buildAnimalPrompt(prompt);
-    console.log('[IMG] Cache miss, generating:', safePrompt.substring(0, 80));
+    console.log('[IMG] Cache miss, generating:', safePrompt.substring(0, 100));
 
     const response = await fetch(
       `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/imagen-4.0-fast-generate-001:predict`,
