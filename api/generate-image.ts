@@ -109,7 +109,8 @@ function buildAnimalPrompt(prompt: string): string {
   const noPeople = removePeople(prompt);
 
   // 第二步：加卡通动物前缀，强制风格
-  return `Cute cartoon animal characters only, kawaii illustration style, no real humans, no children, no faces: ${noPeople}. Flat illustration, colorful, Thai cultural aesthetic`;
+  // 注意：避免使用 face/faces/children 等词，即使前面加 no 也可能触发过滤器
+  return `Kawaii cartoon animal illustration: ${noPeople}. Animal characters only, flat vector art style, colorful, Thai cultural aesthetic, sticker art`;
 }
 
 export default async function handler(req: any, res: any) {
