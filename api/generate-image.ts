@@ -1,5 +1,6 @@
 // api/generate-image.ts
 // 使用 Google 服务账号认证调用 Vertex AI Imagen 4
+// 策略：把 prompt 中的人物替换成可爱卡通动物，保留动作和场景
 
 async function getAccessToken(serviceAccountJson: string): Promise<string> {
   const sa = JSON.parse(serviceAccountJson);
@@ -38,37 +39,43 @@ async function getAccessToken(serviceAccountJson: string): Promise<string> {
   return tokenData.access_token;
 }
 
-// ✅ 清理 prompt 中所有可能触发安全过滤的人物相关词汇
-function sanitizePrompt(prompt: string): string {
-  // 替换人物相关词汇为物品/场景描述
-  const replacements: [RegExp, string][] = [
-    // 儿童相关
-    [/\b(child|children|kid|kids|boy|girl|baby|toddler|infant|youth|juvenile)\b/gi, ''],
-    [/\b(young|little|small)\s+(person|people|student|learner)\b/gi, ''],
-    [/Thai\s+child/gi, 'Thai'],
-    [/\b\d+\s+year[s]?\s+old\b/gi, ''],
-    [/\baround\s+\d+\b/gi, ''],
-    // 人物相关
-    [/\b(person|people|man|woman|men|women|human|figure|student|teacher|monk)\b/gi, ''],
-    [/\b(face|faces|portrait|selfie)\b/gi, ''],
-    [/\b(holding|wearing|carrying|eating|drinking|playing|sitting|standing|walking|running)\b/gi, ''],
-    // 清理多余空格和逗号
-    [/,\s*,/g, ','],
-    [/\s{2,}/g, ' '],
-    [/^[,\s]+|[,\s]+$/g, ''],
+// 随机选一个可爱的泰国风格卡通动物
+function getRandomAnimal(): string {
+  const animals = [
+    'a cute cartoon elephant',
+    'a cute cartoon monkey',
+    'a cute cartoon rabbit',
+    'a cute cartoon cat',
+    'a cute cartoon dog',
+    'a cute cartoon bird',
+    'a cute cartoon frog',
+    'a cute cartoon bear',
   ];
+  return animals[Math.floor(Math.random() * animals.length)];
+}
 
-  let cleaned = prompt;
-  for (const [pattern, replacement] of replacements) {
-    cleaned = cleaned.replace(pattern, replacement);
+// ✅ 把人物替换成卡通动物，保留动作和场景
+function buildAnimalPrompt(prompt: string): string {
+  const animal = getRandomAnimal();
+
+  // 替换人物词汇为卡通动物
+  let transformed = prompt
+    // 带年龄描述的人物
+    .replace(/\b(a\s+)?(cheerful|happy|smiling|cute|young|little|small)?\s*(Thai\s+)?(child|children|kid|kids|boy|girl|baby|toddler|student|person|people|man|woman|monk)\b(\s+around\s+\d+(\s+years?\s+old)?)?/gi, animal)
+    // 单独的人物词
+    .replace(/\b(child|children|kid|kids|boy|girl|baby|toddler|student|person|people|man|woman|human|figure|monk)\b/gi, animal)
+    // 年龄描述
+    .replace(/\baround\s+\d+(\s*-\s*\d+)?\s*(year[s]?\s+old|yo)\b/gi, '')
+    // 多余空格
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  // 如果替换后 prompt 太短或没有意义，构建一个基础 prompt
+  if (transformed.length < 15) {
+    transformed = `${animal} in a Thai setting`;
   }
 
-  // 确保 prompt 不为空
-  if (cleaned.trim().length < 10) {
-    cleaned = 'Thai cultural symbol, flat illustration, colorful';
-  }
-
-  return cleaned.trim();
+  return `${transformed}, cute cartoon style, flat illustration, colorful, Thai cultural aesthetic, no real people, no human faces`;
 }
 
 export default async function handler(req: any, res: any) {
@@ -91,12 +98,9 @@ export default async function handler(req: any, res: any) {
     console.log('[IMG] Getting access token...');
     const accessToken = await getAccessToken(serviceAccountJson);
 
-    // 清理 prompt 并添加安全限制词
-    const cleanedPrompt = sanitizePrompt(prompt);
-    const safePrompt = `${cleanedPrompt}, no people, no faces, no humans, objects and scenery only, flat illustration style, Thai cultural aesthetic`;
-
-    console.log('[IMG] Original prompt:', prompt.substring(0, 60));
-    console.log('[IMG] Safe prompt:', safePrompt.substring(0, 80));
+    const safePrompt = buildAnimalPrompt(prompt);
+    console.log('[IMG] Original:', prompt.substring(0, 60));
+    console.log('[IMG] Animal prompt:', safePrompt.substring(0, 80));
 
     const response = await fetch(
       `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/imagen-4.0-fast-generate-001:predict`,
