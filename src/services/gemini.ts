@@ -12,57 +12,91 @@ function getDoubaoConfig() {
   };
 }
 
+// ✅ 明确的 JSON schema，强制 Doubao 遵循正确结构
+const JSON_SCHEMA_INSTRUCTION = `
+You MUST return a JSON object with EXACTLY these fields (no other field names):
+{
+  "title": "string - lesson title",
+  "introduction": "string - lesson introduction",
+  "vocabulary": [
+    {
+      "thai": "string - Thai word or character",
+      "phonetic": "string - romanized pronunciation",
+      "translation": "string - meaning in target language",
+      "audioText": "string - text for TTS (full traditional name for alphabet)",
+      "imagePrompt": "string - English image description",
+      "example": {
+        "thai": "string - example sentence in Thai",
+        "translation": "string - translation of example"
+      }
+    }
+  ],
+  "content": [
+    {
+      "thai": "string - Thai sentence",
+      "translation": "string - translation"
+    }
+  ],
+  "exercise": [
+    {
+      "question": {
+        "thai": "string - question in Thai",
+        "translation": "string - question translation",
+        "imagePrompt": "string - optional image description"
+      },
+      "options": ["string", "string", "string", "string"],
+      "answer": "string - correct answer",
+      "explanation": {
+        "thai": "string - explanation in Thai",
+        "translation": "string - explanation translation"
+      }
+    }
+  ],
+  "culturalNote": "string - cultural note"
+}
+
+CRITICAL RULES:
+- Use EXACTLY these field names: title, introduction, vocabulary, content, exercise, culturalNote
+- vocabulary must have EXACTLY 4 items
+- exercise must have EXACTLY 3 items
+- Do NOT use any other field names like lessonTitle, audience, foundations, etc.
+- Return ONLY the JSON object, no markdown, no explanation
+`;
+
 async function generateWithDoubao(systemPrompt: string, userPrompt: string): Promise<string> {
   const { apiKey, endpointId } = getDoubaoConfig();
 
-  console.log("[Doubao] API Key prefix:", apiKey?.substring(0, 8) || "EMPTY");
-  console.log("[Doubao] Endpoint ID prefix:", endpointId?.substring(0, 10) || "EMPTY");
-
   if (!apiKey || !endpointId) throw new Error("Doubao not configured");
 
-  let response: Response;
-  try {
-    response = await fetch(
-      "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: endpointId,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt + "\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, no code blocks." },
-          ],
-          response_format: { type: "json_object" },
-          max_tokens: 4096,
-          temperature: 0.7,
-        }),
-      }
-    );
-  } catch (fetchErr: any) {
-    console.error("[Doubao] Network fetch error:", fetchErr?.message);
-    throw fetchErr;
-  }
-
-  console.log("[Doubao] Response status:", response.status);
+  const response = await fetch(
+    "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: endpointId,
+        messages: [
+          { role: "system", content: systemPrompt + "\n\n" + JSON_SCHEMA_INSTRUCTION },
+          { role: "user", content: userPrompt },
+        ],
+        response_format: { type: "json_object" },
+        max_tokens: 4096,
+        temperature: 0.7,
+      }),
+    }
+  );
 
   if (!response.ok) {
     const errText = await response.text();
-    console.error("[Doubao] API error:", response.status, errText);
     throw new Error(`Doubao error ${response.status}: ${errText.substring(0, 300)}`);
   }
 
   const data = await response.json();
-  console.log("[Doubao] finish_reason:", data?.choices?.[0]?.finish_reason);
-
   const text = data?.choices?.[0]?.message?.content;
-  if (!text) {
-    console.error("[Doubao] No content:", JSON.stringify(data).substring(0, 200));
-    throw new Error("No response content from Doubao");
-  }
+  if (!text) throw new Error("No response content from Doubao");
   return text;
 }
 
@@ -114,18 +148,16 @@ Rules:
 1. Audience: ${isKid ? "Children - simple, fun language" : "Adults - professional, engaging"}.
 2. Topic: ${profile.topic}.
 3. Level: ${profile.age} (primary=elementary school, middle=middle school, high=high school, adult=professional).
-4. Always provide exactly 3 exercises.
+4. Always provide exactly 3 exercises with multiple choice options.
 5. Difficulty ${profile.difficulty}:
    - Foundations: Thai Alphabet ONLY. Lesson ${lessonCount}: next 4 characters. Standard naming (ก=Kor Kai). Specify consonant class.
    - Elementary: Common words, max 6-word sentences.
    - Intermediate: Functional communication, 8-15 word sentences.
    - Advanced: Complex scenarios, 25+ word sentences.
 6. Vocabulary: exactly 4 units, DIFFERENT FROM: ${profile.pastVocabulary.join(", ") || "None"}.
-   Each unit needs: thai, phonetic, translation, audioText, example{thai,translation}, imagePrompt.
    For alphabet: audioText = full traditional name (e.g. 'ก ไก่').
 7. Language for explanations: ${profile.auxiliaryLanguage}.
-8. imagePrompt: detailed English description, Thai cultural context, no people.
-9. Return valid JSON only matching the exact schema.`;
+8. imagePrompt: detailed English description, Thai cultural context, no people.`;
 
   const userPrompt = `Generate a ${profile.difficulty} Thai lesson. Index: ${lessonCount}. Focus: ${profile.focus}. Topic: ${profile.topic}. Level: ${profile.age}. Language: ${profile.auxiliaryLanguage}.${profile.difficulty === "Foundations" ? " Sequential alphabet basics." : ""}`;
 
@@ -135,19 +167,19 @@ Rules:
       console.log("[Lesson] Using Doubao Seed 2.0 Lite...");
       const text = await generateWithDoubao(systemInstruction, userPrompt);
       const cleaned = text.replace(/```json|```/g, "").trim();
-      console.log("[Lesson] Response length:", cleaned.length);
-      console.log("[Lesson] Response preview:", cleaned.substring(0, 300));
-      try {
-        return JSON.parse(cleaned) as ThaiLesson;
-      } catch (parseErr: any) {
-        console.error("[Lesson] JSON parse failed:", parseErr.message);
-        console.error("[Lesson] Raw text (first 500):", cleaned.substring(0, 500));
-        console.error("[Lesson] Raw text (last 200):", cleaned.substring(cleaned.length - 200));
-        throw parseErr;
+      const parsed = JSON.parse(cleaned) as ThaiLesson;
+
+      // ✅ 验证关键字段是否存在
+      if (!parsed.title || !parsed.vocabulary || !parsed.exercise) {
+        console.error("[Lesson] Invalid structure, missing fields:", Object.keys(parsed));
+        throw new Error("Invalid lesson structure from Doubao");
       }
+
+      console.log("[Lesson] ✅ Doubao success, title:", parsed.title);
+      return parsed;
     } catch (e: any) {
       console.error("[Lesson] Doubao failed:", e?.message);
-      console.warn("[Lesson] Falling back to Gemini Key 1...");
+      console.warn("[Lesson] Falling back to Gemini...");
       geminiKeyIndex = 1;
     }
   }
