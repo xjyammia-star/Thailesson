@@ -14,37 +14,55 @@ function getDoubaoConfig() {
 
 async function generateWithDoubao(systemPrompt: string, userPrompt: string): Promise<string> {
   const { apiKey, endpointId } = getDoubaoConfig();
-  if (!apiKey || !endpointId) throw new Error("Doubao not configured");
 
-  const response = await fetch(
-    "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: endpointId,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt + "\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, no code blocks." },
-        ],
-        response_format: { type: "json_object" },
-        max_tokens: 4096,
-        temperature: 0.7,
-      }),
-    }
-  );
+  console.log("[Doubao] API Key prefix:", apiKey?.substring(0, 8) || "EMPTY");
+  console.log("[Doubao] Endpoint ID prefix:", endpointId?.substring(0, 10) || "EMPTY");
+
+  if (!apiKey || !endpointId) throw new Error("Doubao not configured: missing apiKey or endpointId");
+
+  let response: Response;
+  try {
+    response = await fetch(
+      "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: endpointId,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt + "\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, no code blocks." },
+          ],
+          response_format: { type: "json_object" },
+          max_tokens: 4096,
+          temperature: 0.7,
+        }),
+      }
+    );
+  } catch (fetchErr: any) {
+    console.error("[Doubao] Network fetch error:", fetchErr?.message, fetchErr);
+    throw fetchErr;
+  }
+
+  console.log("[Doubao] Response status:", response.status);
 
   if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Doubao error ${response.status}: ${err.substring(0, 200)}`);
+    const errText = await response.text();
+    console.error("[Doubao] API error response:", response.status, errText);
+    throw new Error(`Doubao error ${response.status}: ${errText.substring(0, 300)}`);
   }
 
   const data = await response.json();
+  console.log("[Doubao] Response received, finish_reason:", data?.choices?.[0]?.finish_reason);
+
   const text = data?.choices?.[0]?.message?.content;
-  if (!text) throw new Error("No response from Doubao");
+  if (!text) {
+    console.error("[Doubao] No content in response:", JSON.stringify(data).substring(0, 200));
+    throw new Error("No response content from Doubao");
+  }
   return text;
 }
 
@@ -67,7 +85,9 @@ export function getAvailableKeys(): { index: number; label: string; available: b
 
 export function isDoubaoAvailable(): boolean {
   const { apiKey, endpointId } = getDoubaoConfig();
-  return !!apiKey && !!endpointId;
+  const available = !!apiKey && !!endpointId;
+  console.log("[Doubao] isDoubaoAvailable:", available, "key:", apiKey?.substring(0, 5) || "empty", "endpoint:", endpointId?.substring(0, 5) || "empty");
+  return available;
 }
 
 function getGeminiApiKey(keyIndex: number = 1): string {
@@ -117,11 +137,15 @@ Rules:
       console.log("[Lesson] Using Doubao Seed 2.0 Lite...");
       const text = await generateWithDoubao(systemInstruction, userPrompt);
       const cleaned = text.replace(/```json|```/g, "").trim();
+      console.log("[Lesson] Doubao response length:", cleaned.length);
       return JSON.parse(cleaned) as ThaiLesson;
     } catch (e: any) {
-      console.warn("[Lesson] Doubao failed, falling back to Gemini:", e?.message);
+      console.error("[Lesson] Doubao failed:", e?.message, e);
+      console.warn("[Lesson] Falling back to Gemini Key 1...");
       geminiKeyIndex = 1;
     }
+  } else {
+    console.log("[Lesson] Skipping Doubao - keyIndex:", geminiKeyIndex, "doubaoAvailable:", isDoubaoAvailable());
   }
 
   // 备用 Gemini
@@ -179,7 +203,7 @@ Rules:
 }
 
 // ============================================================
-// 图片生成（✅ 传递泰文词汇作为缓存 key）
+// 图片生成（传递泰文词汇作为缓存 key）
 // ============================================================
 
 export async function generateImage(prompt: string, thaiWord?: string): Promise<string | null> {
@@ -187,14 +211,12 @@ export async function generateImage(prompt: string, thaiWord?: string): Promise<
     const response = await fetch("/api/generate-image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, thaiWord }),  // ✅ 传递泰文词汇
+      body: JSON.stringify({ prompt, thaiWord }),
     });
-
     if (!response.ok) {
       if (response.status === 429) return "QUOTA_EXCEEDED";
       return null;
     }
-
     const data = await response.json();
     return data.image || null;
   } catch (e: any) {
