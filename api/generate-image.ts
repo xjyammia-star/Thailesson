@@ -1,10 +1,8 @@
 // api/generate-image.ts
 // 使用 Google 服务账号认证调用 Vertex AI Imagen 4
 
-// 生成 JWT 并换取 Access Token
 async function getAccessToken(serviceAccountJson: string): Promise<string> {
   const sa = JSON.parse(serviceAccountJson);
-
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     iss: sa.client_email,
@@ -13,26 +11,15 @@ async function getAccessToken(serviceAccountJson: string): Promise<string> {
     iat: now,
     exp: now + 3600,
   };
-
-  // 构建 JWT header.payload
   const header = { alg: 'RS256', typ: 'JWT' };
-  const encode = (obj: object) =>
-    Buffer.from(JSON.stringify(obj)).toString('base64url');
-
+  const encode = (obj: object) => Buffer.from(JSON.stringify(obj)).toString('base64url');
   const headerPayload = `${encode(header)}.${encode(payload)}`;
-
-  // 用私钥签名
-  const privateKey = sa.private_key;
-
-  // 使用 Node.js crypto 签名
   const crypto = await import('crypto');
   const sign = crypto.createSign('RSA-SHA256');
   sign.update(headerPayload);
-  const signature = sign.sign(privateKey, 'base64url');
-
+  const signature = sign.sign(sa.private_key, 'base64url');
   const jwt = `${headerPayload}.${signature}`;
 
-  // 用 JWT 换取 Access Token
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -73,8 +60,9 @@ export default async function handler(req: any, res: any) {
 
     console.log('[IMG] Calling Imagen 4 Fast for:', prompt.substring(0, 60));
 
+    // ✅ 修正：使用正确的模型名 imagen-4.0-fast-generate-001
     const response = await fetch(
-      `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/imagen-4.0-fast-generate-preview-06-06:predict`,
+      `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/imagen-4.0-fast-generate-001:predict`,
       {
         method: 'POST',
         headers: {
