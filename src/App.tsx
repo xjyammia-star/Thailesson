@@ -7,7 +7,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   BookOpen, Settings, Sparkles, Volume2, ChevronRight, ChevronDown,
   RotateCcw, CheckCircle2, XCircle, Loader2, Languages, User,
-  Gamepad2, ArrowLeft, Home, Key
+  Gamepad2, ArrowLeft, Home, Key, Flame, Trophy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
@@ -187,22 +187,17 @@ export default function App() {
     return Math.round(base * pointsMultiplier);
   };
 
-  // 语音播放：优先 Google Cloud TTS，降级 Web Speech API
   const playAudio = async (text: string, speakText?: string) => {
     setAudioError(null);
     const textToSpeak = speakText || text;
     try {
       setLoadingAudio(text);
-
-      // 尝试 Google Cloud TTS
       const base64Audio = await generateTTS(textToSpeak);
       if (base64Audio) {
         await playBase64Audio(base64Audio);
         setLoadingAudio(null);
         return;
       }
-
-      // 降级：Web Speech API
       const synth = window.speechSynthesis;
       if (!synth) { setAudioError(currentT.audioError); setLoadingAudio(null); return; }
       synth.cancel();
@@ -260,6 +255,8 @@ export default function App() {
       dailyGoal: '今日目标', museum: '成就馆', museumTitle: '成就博物馆',
       apiKeyLabel: 'API Key 选择', speechRateLabel: '语音速度',
       speechRateSlow: '慢', speechRateNormal: '正常', speechRateFast: '快',
+      streakLabel: '连续学习天数', pointsLabel2: '积分',
+      todayProgress: '今日进度',
       levels: { Foundations: '入门 (发音/字母)', Elementary: '初级 (基础词汇)', Intermediate: '中级 (日常对话)', Advanced: '高级 (地道表达)' },
       focuses: { Listening: '听力', Speaking: '口语', Reading: '阅读', Writing: '写作', Comprehensive: '综合' },
       focusDescriptions: { Listening: '核心：磨炼辨音与语调。', Speaking: '核心：模拟实战对话。', Reading: '核心：文字拆解与长句。', Writing: '核心：构词逻辑与翻译。', Comprehensive: '核心：平衡各维发展。' },
@@ -268,7 +265,7 @@ export default function App() {
       nextLesson: '下一课', keyVocab: '核心词汇', reading: '阅读训练', interactive: '互动练习',
       placeholderAnswer: '输入你的答案...', submit: '提交答案', correctAnswer: '正确答案',
       culturalNote: '文化小贴士', progress: '学习进度',
-      milestone: (n: number) => `已完成 ${n} 课时，距下一里程碑还有 ${10 - (n % 10)} 课！`,
+      milestone: (n: number) => `今日已完成 ${n} / ${profile.dailyGoal} 课时`,
       quotaError: '图像生成配额已用完，本课不显示图片。', audioError: '语音服务暂时不可用。', playbackError: '播放失败，请重试。',
       museumDesc: '通过辛勤学习解锁的泰式珍宝。', balance: '可用余额',
       discoveryTitle: '泰国文化探索之旅',
@@ -276,7 +273,9 @@ export default function App() {
       rewardRoyal: '👑 皇家奖赏 (+10.0x)', rewardExpert: '🌟 泰国通奖赏 (+3.0x)',
       rewardExploring: '探索中...', rewardNovice: '初级奖励 (+1.0x)',
       regions: { exploring: '初探泰国', southern: '南部风情', northern: '北部遗迹', ultimate: '终极艺术' },
-      pointsLabel: '积分', unlockWith: '解锁需要', login: '登录保存进度', logout: '退出', home: '首页'
+      pointsLabel: '积分', unlockWith: '解锁需要', login: '登录保存进度', logout: '退出', home: '首页',
+      goalReached: '目标达成！', perfectScore: '完美！', lessonDone: '完成！',
+      earned: '获得', returnHome: '返回首页', goalBonus: (r: number) => `目标达成奖励：+${r} 积分！`
     },
     en: {
       setupTitle: 'Customize Your Thai Lesson', setupDesc: 'Tell AI your needs and we will generate the best content for you.',
@@ -289,6 +288,8 @@ export default function App() {
       dailyGoal: 'Daily Goal', museum: 'Museum', museumTitle: 'Museum of Achievements',
       apiKeyLabel: 'API Key', speechRateLabel: 'Speech Speed',
       speechRateSlow: 'Slow', speechRateNormal: 'Normal', speechRateFast: 'Fast',
+      streakLabel: 'Day streak', pointsLabel2: 'Points',
+      todayProgress: "Today's Progress",
       levels: { Foundations: 'Foundations', Elementary: 'Elementary', Intermediate: 'Intermediate', Advanced: 'Advanced' },
       focuses: { Listening: 'Listening', Speaking: 'Speaking', Reading: 'Reading', Writing: 'Writing', Comprehensive: 'Comprehensive' },
       focusDescriptions: { Listening: 'Sharpen phoneme recognition.', Speaking: 'Simulate real dialogue.', Reading: 'Text decomposition.', Writing: 'Word construction.', Comprehensive: 'Balanced development.' },
@@ -297,7 +298,7 @@ export default function App() {
       nextLesson: 'Next Lesson', keyVocab: 'Key Vocabulary', reading: 'Reading', interactive: 'Exercises',
       placeholderAnswer: 'Type your answer...', submit: 'Submit', correctAnswer: 'Correct Answer',
       culturalNote: 'Cultural Note', progress: 'Progress',
-      milestone: (n: number) => `${n} lessons done. ${10 - (n % 10)} more to milestone!`,
+      milestone: (n: number) => `Today: ${n} / ${profile.dailyGoal} lessons done`,
       quotaError: 'Image quota exceeded.', audioError: 'Voice service unavailable.', playbackError: 'Playback failed.',
       museumDesc: 'Treasures unlocked through dedication.', balance: 'Balance',
       discoveryTitle: 'Thailand Discovery',
@@ -305,7 +306,9 @@ export default function App() {
       rewardRoyal: '👑 Royal Bonus (+10.0x)', rewardExpert: '🌟 Expert Bonus (+3.0x)',
       rewardExploring: 'Exploring...', rewardNovice: 'Novice Bonus (+1.0x)',
       regions: { exploring: 'Beginning', southern: 'South', northern: 'North', ultimate: 'Ultimate' },
-      pointsLabel: 'Points', unlockWith: 'Unlock for', login: 'Sign in', logout: 'Sign out', home: 'Home'
+      pointsLabel: 'Points', unlockWith: 'Unlock for', login: 'Sign in', logout: 'Sign out', home: 'Home',
+      goalReached: 'Goal reached!', perfectScore: 'Perfect!', lessonDone: 'Done!',
+      earned: 'Earned', returnHome: 'Return Home', goalBonus: (r: number) => `Goal Bonus: +${r} Points!`
     },
     th: {
       setupTitle: 'ปรับแต่งบทเรียนของคุณ', setupDesc: 'บอก AI ความต้องการของคุณ',
@@ -318,6 +321,8 @@ export default function App() {
       dailyGoal: 'เป้าหมายรายวัน', museum: 'พิพิธภัณฑ์', museumTitle: 'พิพิธภัณฑ์',
       apiKeyLabel: 'API Key', speechRateLabel: 'ความเร็วเสียง',
       speechRateSlow: 'ช้า', speechRateNormal: 'ปกติ', speechRateFast: 'เร็ว',
+      streakLabel: 'วันต่อเนื่อง', pointsLabel2: 'คะแนน',
+      todayProgress: 'ความก้าวหน้าวันนี้',
       levels: { Foundations: 'พื้นฐาน', Elementary: 'เริ่มต้น', Intermediate: 'กลาง', Advanced: 'สูง' },
       focuses: { Listening: 'ฟัง', Speaking: 'พูด', Reading: 'อ่าน', Writing: 'เขียน', Comprehensive: 'ครอบคลุม' },
       focusDescriptions: { Listening: 'ฝึกการฟัง', Speaking: 'ฝึกการพูด', Reading: 'ฝึกการอ่าน', Writing: 'ฝึกการเขียน', Comprehensive: 'ครอบคลุมทุกด้าน' },
@@ -326,7 +331,7 @@ export default function App() {
       nextLesson: 'บทถัดไป', keyVocab: 'คำศัพท์', reading: 'อ่าน', interactive: 'แบบฝึกหัด',
       placeholderAnswer: 'พิมพ์คำตอบ...', submit: 'ส่ง', correctAnswer: 'คำตอบที่ถูก',
       culturalNote: 'บันทึกวัฒนธรรม', progress: 'ความก้าวหน้า',
-      milestone: (n: number) => `เรียนจบ ${n} บทแล้ว!`,
+      milestone: (n: number) => `วันนี้: ${n} / ${profile.dailyGoal} บท`,
       quotaError: 'โควตาภาพหมด', audioError: 'เสียงไม่พร้อม', playbackError: 'เล่นไม่ได้',
       museumDesc: 'ขุมทรัพย์ที่ปลดล็อกแล้ว', balance: 'ยอดคงเหลือ',
       discoveryTitle: 'สำรวจไทย',
@@ -334,11 +339,19 @@ export default function App() {
       rewardRoyal: '👑 รางวัลพระราชวัง', rewardExpert: '🌟 ผู้เชี่ยวชาญ',
       rewardExploring: 'กำลังสำรวจ...', rewardNovice: 'รางวัลเริ่มต้น',
       regions: { exploring: 'เริ่มต้น', southern: 'ใต้', northern: 'เหนือ', ultimate: 'สุดยอด' },
-      pointsLabel: 'คะแนน', unlockWith: 'ปลดล็อก', login: 'เข้าสู่ระบบ', logout: 'ออก', home: 'หน้าแรก'
+      pointsLabel: 'คะแนน', unlockWith: 'ปลดล็อก', login: 'เข้าสู่ระบบ', logout: 'ออก', home: 'หน้าแรก',
+      goalReached: 'ถึงเป้าหมาย!', perfectScore: 'สมบูรณ์แบบ!', lessonDone: 'เสร็จแล้ว!',
+      earned: 'ได้รับ', returnHome: 'กลับหน้าแรก', goalBonus: (r: number) => `โบนัส: +${r} คะแนน!`
     }
   };
 
   const currentT = t[profile.auxiliaryLanguage === 'th' ? 'th' : profile.auxiliaryLanguage === 'en' ? 'en' : 'zh'];
+
+  // ✅ 今日进度计算
+  const todayCompleted = profile.lessonsCompletedToday || 0;
+  const todayGoal = profile.dailyGoal || 1;
+  const progressPercent = Math.min((todayCompleted / todayGoal) * 100, 100);
+  const goalReached = todayCompleted >= todayGoal;
 
   const MuseumView = () => {
     const [mLang, setMLang] = useState<'zh' | 'en' | 'th'>('zh');
@@ -456,9 +469,23 @@ export default function App() {
           <div className="flex items-center gap-3">
             {user && (
               <div className="flex items-center gap-3 px-3 py-2 bg-white/5 rounded-2xl border border-white/10">
-                <span className="text-amber-500">🔥</span><span className="text-sm font-bold text-thai-gold">{profile.streak || 0}</span>
-                <div className="w-px h-4 bg-white/10" />
-                <span className="text-[10px] text-slate-400">✧</span><span className="text-sm font-bold text-slate-300">{profile.points || 0}</span>
+                {/* ✅ 连续天数说明 */}
+                <div className="flex flex-col items-center" title={currentT.streakLabel}>
+                  <div className="flex items-center gap-1">
+                    <Flame size={14} className="text-amber-500" />
+                    <span className="text-sm font-bold text-thai-gold">{profile.streak || 0}</span>
+                  </div>
+                  <span className="text-[9px] text-slate-500 uppercase tracking-tight hidden md:block">{currentT.streakLabel}</span>
+                </div>
+                <div className="w-px h-6 bg-white/10" />
+                {/* ✅ 积分说明 */}
+                <div className="flex flex-col items-center" title={currentT.pointsLabel2}>
+                  <div className="flex items-center gap-1">
+                    <Trophy size={14} className="text-thai-gold" />
+                    <span className="text-sm font-bold text-slate-300">{profile.points || 0}</span>
+                  </div>
+                  <span className="text-[9px] text-slate-500 uppercase tracking-tight hidden md:block">{currentT.pointsLabel2}</span>
+                </div>
               </div>
             )}
             <div className="flex bg-white/5 p-1 rounded-[1.25rem] border border-white/10">
@@ -493,6 +520,30 @@ export default function App() {
                 <h2 className="text-4xl font-display font-black mb-4 text-white uppercase tracking-tight">{currentT.setupTitle}</h2>
                 <p className="text-slate-400">{currentT.setupDesc}</p>
               </div>
+
+              {/* ✅ 今日进度条 */}
+              <div className="bg-thai-blue rounded-3xl p-6 mb-6 border border-white/5">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-black text-slate-400 uppercase tracking-widest">{currentT.todayProgress}</span>
+                  <span className={`text-sm font-black ${goalReached ? 'text-green-400' : 'text-thai-gold'}`}>
+                    {todayCompleted} / {todayGoal} {profile.auxiliaryLanguage === 'zh' ? '课时' : profile.auxiliaryLanguage === 'th' ? 'บท' : 'lessons'}
+                    {goalReached && ' ✓'}
+                  </span>
+                </div>
+                <div className="h-3 bg-white/5 rounded-full overflow-hidden border border-white/5">
+                  <motion.div
+                    className={`h-full rounded-full transition-all duration-1000 ${goalReached ? 'bg-green-400' : 'bg-thai-gold'}`}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+                {goalReached && (
+                  <p className="text-xs text-green-400 font-bold mt-2 text-center">
+                    {currentT.goalReached} 🎉
+                  </p>
+                )}
+              </div>
+
               <div className="bg-thai-blue rounded-[3rem] p-10 shadow-2xl border border-white/5 space-y-8">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
@@ -607,13 +658,14 @@ export default function App() {
 
           {step === 'learning' && lesson && (
             <motion.div key="learning" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8">
+              {/* ✅ 顶部移除"下一课"按钮 */}
               <div className={`p-10 rounded-[2.5rem] shadow-2xl ${isKid ? 'bg-gradient-to-br from-amber-400 to-orange-500' : 'bg-thai-blue border border-white/5'}`}>
                 <div className="flex items-center justify-between mb-6">
                   <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase border ${isKid ? 'bg-black/10 border-black/10 text-thai-navy' : 'bg-white/5 border-white/10 text-white'}`}>
                     {currentT.levels[profile.difficulty]} • {currentT.focuses[profile.focus]}
                   </span>
-                  <button onClick={() => handleStart(true)} className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all active:scale-95 ${isKid ? 'bg-thai-navy text-white' : 'bg-thai-gold text-thai-navy hover:bg-white'}`}>
-                    {currentT.nextLesson}
+                  <button onClick={() => setStep('setup')} className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all active:scale-95 flex items-center gap-1 ${isKid ? 'bg-thai-navy text-white' : 'bg-white/10 text-slate-300 hover:bg-white/20'}`}>
+                    <Home size={14} />{currentT.home}
                   </button>
                 </div>
                 <h2 className={`text-4xl font-display font-black mb-4 uppercase ${isKid ? 'text-thai-navy' : 'text-white'}`}>{lesson.title}</h2>
@@ -638,7 +690,6 @@ export default function App() {
                               {loadingAudio === vocab.thai ? <Loader2 size={18} className="animate-spin" /> : <Volume2 size={18} />}
                             </button>
                           </div>
-                          {/* ✅ 图片或占位符 */}
                           {vocab.imageUrl ? (
                             <img src={vocab.imageUrl} alt={vocab.thai} className="w-full h-40 object-cover rounded-xl mb-3 shadow-lg border border-white/5" />
                           ) : (
@@ -692,7 +743,6 @@ export default function App() {
                               {showExerciseTranslations[idx] && (
                                 <motion.p initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="text-sm text-slate-400 italic">{ex.question.translation}</motion.p>
                               )}
-                              {/* ✅ 练习题图片或占位符 */}
                               {ex.question.imageUrl ? (
                                 <img src={ex.question.imageUrl} alt="" className="w-full max-w-sm h-48 object-cover rounded-3xl shadow-lg border border-white/5" />
                               ) : ex.question.imagePrompt ? (
@@ -733,20 +783,35 @@ export default function App() {
                         </div>
                       ))}
                     </div>
+
                     {!showResults ? (
                       <button onClick={handleFinishLesson} className="mt-10 w-full py-5 bg-thai-gold text-thai-navy font-black rounded-3xl hover:bg-white transition-all active:scale-95">{currentT.submit}</button>
                     ) : (
+                      // ✅ 提交后显示结果 + 下一课按钮
                       <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mt-10 p-10 bg-thai-blue rounded-[3rem] border-2 border-thai-gold text-center space-y-5">
                         <div className="w-16 h-16 bg-thai-gold/10 text-thai-gold rounded-[2rem] flex items-center justify-center mx-auto"><CheckCircle2 size={36} /></div>
                         <h3 className="text-2xl font-display font-black text-white uppercase">
-                          {calculateScore() === 100 ? (profile.auxiliaryLanguage === 'zh' ? '完美！' : 'Perfect!') : (profile.auxiliaryLanguage === 'zh' ? '完成！' : 'Done!')}
+                          {calculateScore() === 100 ? currentT.perfectScore : currentT.lessonDone}
                         </h3>
                         <p className="text-slate-400 font-bold">
-                          {profile.auxiliaryLanguage === 'zh' ? '获得' : 'Earned'} <span className="text-thai-gold font-black">✧ {Math.round((calculateScore() / 10) * pointsMultiplier)}</span> {currentT.pointsLabel}
+                          {currentT.earned} <span className="text-thai-gold font-black">✧ {Math.round((calculateScore() / 10) * pointsMultiplier)}</span> {currentT.pointsLabel}
                         </p>
-                        <button onClick={() => setStep('setup')} className="w-full py-4 bg-thai-gold text-thai-navy font-black rounded-2xl hover:bg-white transition-all active:scale-95">
-                          {profile.auxiliaryLanguage === 'zh' ? '返回首页' : 'Return Home'}
-                        </button>
+                        {profile.lessonsCompletedToday % profile.dailyGoal === 0 && (
+                          <motion.div initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.3 }}
+                            className="p-4 bg-thai-gold text-thai-navy rounded-2xl text-sm font-black flex items-center justify-center gap-2 uppercase">
+                            <Sparkles size={18} />
+                            {currentT.goalBonus(calculatePointsReward(profile.dailyGoal, profile.streak > 1 && profile.dailyGoal === 10))}
+                          </motion.div>
+                        )}
+                        <div className="flex flex-col gap-3 pt-2">
+                          {/* ✅ 下一课按钮移到这里 */}
+                          <button onClick={() => handleStart(true)} className="w-full py-4 bg-thai-gold text-thai-navy font-black rounded-2xl hover:bg-white transition-all active:scale-95 flex items-center justify-center gap-2">
+                            {currentT.nextLesson} <ChevronRight size={18} />
+                          </button>
+                          <button onClick={() => setStep('setup')} className="w-full py-3 bg-white/5 text-slate-300 font-black rounded-2xl hover:bg-white/10 transition-all active:scale-95 border border-white/10">
+                            {currentT.returnHome}
+                          </button>
+                        </div>
                       </motion.div>
                     )}
                   </section>
@@ -759,17 +824,21 @@ export default function App() {
                       <p className="text-slate-200 text-sm leading-relaxed italic">{lesson.culturalNote}</p>
                     </section>
                   )}
+                  {/* ✅ 侧边进度卡片 */}
                   <section className="bg-thai-blue rounded-[2.5rem] p-8 border border-white/5">
-                    <h4 className="font-black mb-5 text-white uppercase tracking-widest text-sm">{currentT.progress}</h4>
+                    <h4 className="font-black mb-5 text-white uppercase tracking-widest text-sm">{currentT.todayProgress}</h4>
                     <div className="space-y-3">
                       <div className="flex justify-between text-[10px] font-black text-slate-400 uppercase">
                         <span>{currentT.focuses[profile.focus]}</span>
-                        <span className="text-thai-gold">{Math.round(((profile.lessonsCompletedToday % profile.dailyGoal) / profile.dailyGoal) * 100)}%</span>
+                        <span className={goalReached ? 'text-green-400' : 'text-thai-gold'}>
+                          {todayCompleted} / {todayGoal}
+                        </span>
                       </div>
                       <div className="h-3 bg-white/5 rounded-full overflow-hidden border border-white/5">
-                        <div className="h-full bg-thai-gold rounded-full transition-all duration-1000" style={{ width: `${Math.round(((profile.lessonsCompletedToday % profile.dailyGoal) / profile.dailyGoal) * 100)}%` }} />
+                        <div className={`h-full rounded-full transition-all duration-1000 ${goalReached ? 'bg-green-400' : 'bg-thai-gold'}`}
+                          style={{ width: `${progressPercent}%` }} />
                       </div>
-                      <p className="text-[11px] text-slate-500 font-bold uppercase">{currentT.milestone(profile.lessonsCompletedToday)}</p>
+                      <p className="text-[11px] text-slate-500 font-bold uppercase">{currentT.milestone(todayCompleted)}</p>
                     </div>
                   </section>
                 </div>
