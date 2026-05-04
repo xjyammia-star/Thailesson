@@ -1,7 +1,7 @@
 // api/generate-image.ts
 // 使用 Google 服务账号认证调用 Vertex AI Imagen 4
 // 带 Google Cloud Storage 缓存：同一词汇只生成一次图片
-// 所有图片强制使用卡通动物风格，避免人物过滤
+// 双重策略：先替换人物词汇，再加卡通动物前缀
 
 async function getAccessToken(serviceAccountJson: string): Promise<string> {
   const sa = JSON.parse(serviceAccountJson);
@@ -86,22 +86,30 @@ async function saveToCache(accessToken: string, bucket: string, key: string, bas
   }
 }
 
-// ✅ 核心策略：不管原始 prompt 是什么内容，
-// 统一用卡通动物角色风格包装，从根本上避免人物过滤
-function buildAnimalPrompt(prompt: string): string {
-  // 提取原始 prompt 的核心概念（去掉画风描述词，保留主题）
-  const cleanedPrompt = prompt
-    .replace(/\bphotorealistic\b/gi, '')
-    .replace(/\bhigh.quality\b/gi, '')
-    .replace(/\b3D render\b/gi, '')
-    .replace(/\bprofessional photo\b/gi, '')
-    .replace(/\bscenic\b/gi, '')
+// 所有人物词汇替换为 "cartoon animal character"
+function removePeople(prompt: string): string {
+  return prompt
+    // 带修饰词的人物
+    .replace(/\b(a\s+)?(small|little|young|old|happy|smiling|cheerful|cute|pretty|beautiful|handsome|elderly|Thai|local|primary school|school)(\s+(small|little|young|old|happy|smiling|cheerful|cute|pretty|beautiful|handsome|elderly|Thai|local|primary school|school))*\s+(girl|boy|child|children|kid|kids|baby|toddler|man|woman|men|women|person|people|student|teacher|monk|vendor|farmer|worker|chef|doctor|nurse|mother|father|parent|family|couple|grandfather|grandmother|grandpa|grandma|sister|brother|villager|athlete|soldier|policeman)\b/gi, 'cartoon animal character')
+    // 单独人物词
+    .replace(/\b(girl|boy|child|children|kid|kids|baby|toddler|man|woman|men|women|person|people|student|teacher|monk|vendor|farmer|worker|chef|doctor|nurse|mother|father|parent|family|couple|grandfather|grandmother|grandpa|grandma|sister|brother|villager|athlete|soldier|policeman|human|figure)\b/gi, 'cartoon animal character')
+    // 年龄描述
+    .replace(/\b\d+\s*(-\s*\d+)?\s*(year[s]?\s+old|yo)\b/gi, '')
+    // 画风词替换
+    .replace(/\bphotorealistic\b/gi, 'illustrated')
+    .replace(/\brealistic\b/gi, 'illustrated')
+    .replace(/\b3D render\b/gi, 'flat illustration')
+    // 清理多余空格
     .replace(/\s{2,}/g, ' ')
     .trim();
+}
 
-  // 强制前缀：卡通动物角色风格
-  // 这个前缀会覆盖所有人物描述，因为 Imagen 会优先遵循开头的风格指令
-  return `Cute cartoon animal characters illustration style: ${cleanedPrompt}. All characters must be cartoon animals (elephant, rabbit, cat, dog, bear, etc.), no real humans, no real faces, no children, kawaii flat illustration, colorful, Thai cultural elements, white background`;
+function buildAnimalPrompt(prompt: string): string {
+  // 第一步：替换所有人物词汇
+  const noPeople = removePeople(prompt);
+
+  // 第二步：加卡通动物前缀，强制风格
+  return `Cute cartoon animal characters only, kawaii illustration style, no real humans, no children, no faces: ${noPeople}. Flat illustration, colorful, Thai cultural aesthetic`;
 }
 
 export default async function handler(req: any, res: any) {
