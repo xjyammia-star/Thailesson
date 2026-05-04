@@ -9,27 +9,22 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     define: {
-      // Gemini API Keys（文字课程生成用，需要暴露到前端）
+      // Gemini API Keys（备用）
       'import.meta.env.VITE_GEMINI_API_KEY_1': JSON.stringify(
         env.VITE_GEMINI_API_KEY_1 || env.VITE_GEMINI_API_KEY || env.GEMINI_API_KEY || ""
       ),
-      'import.meta.env.VITE_GEMINI_API_KEY_2': JSON.stringify(
-        env.VITE_GEMINI_API_KEY_2 || ""
-      ),
-      'import.meta.env.VITE_GEMINI_API_KEY_3': JSON.stringify(
-        env.VITE_GEMINI_API_KEY_3 || ""
-      ),
-      // 注意：HF_TOKEN 不需要在这里配置
-      // 它只在服务器端 api/generate-image.ts 里用 process.env.HF_TOKEN 读取
-      // 不会暴露给浏览器，更安全
+      'import.meta.env.VITE_GEMINI_API_KEY_2': JSON.stringify(env.VITE_GEMINI_API_KEY_2 || ""),
+      'import.meta.env.VITE_GEMINI_API_KEY_3': JSON.stringify(env.VITE_GEMINI_API_KEY_3 || ""),
+      // Doubao API（主要文字生成）
+      'import.meta.env.VITE_DOUBAO_API_KEY': JSON.stringify(env.DOUBAO_API_KEY || ""),
+      'import.meta.env.VITE_DOUBAO_ENDPOINT_ID': JSON.stringify(env.DOUBAO_ENDPOINT_ID || ""),
+      // 兼容旧写法
       'process.env.GEMINI_API_KEY': JSON.stringify(
         env.VITE_GEMINI_API_KEY_1 || env.VITE_GEMINI_API_KEY || env.GEMINI_API_KEY || ""
       ),
     },
     resolve: {
-      alias: {
-        '@': path.resolve(__dirname, '.'),
-      },
+      alias: { '@': path.resolve(__dirname, '.') },
     },
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
