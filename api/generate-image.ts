@@ -39,18 +39,12 @@ async function getAccessToken(serviceAccountJson: string): Promise<string> {
   return tokenData.access_token;
 }
 
-// 把 prompt 转成稳定的缓存 key（用 MD5 hash）
 async function promptToKey(prompt: string): Promise<string> {
   const crypto = await import('crypto');
   return crypto.createHash('md5').update(prompt.toLowerCase().trim()).digest('hex');
 }
 
-// 从 GCS 读取缓存图片，返回 base64 data URL
-async function getFromCache(
-  accessToken: string,
-  bucket: string,
-  key: string
-): Promise<string | null> {
+async function getFromCache(accessToken: string, bucket: string, key: string): Promise<string | null> {
   try {
     const response = await fetch(
       `https://storage.googleapis.com/storage/v1/b/${bucket}/o/${key}.png?alt=media`,
@@ -66,13 +60,7 @@ async function getFromCache(
   }
 }
 
-// 把图片存入 GCS 缓存
-async function saveToCache(
-  accessToken: string,
-  bucket: string,
-  key: string,
-  base64: string
-): Promise<void> {
+async function saveToCache(accessToken: string, bucket: string, key: string, base64: string): Promise<void> {
   try {
     const imageBuffer = Buffer.from(base64, 'base64');
     const response = await fetch(
@@ -97,7 +85,6 @@ async function saveToCache(
   }
 }
 
-// 把人物替换成卡通动物，保留动作和场景
 function getRandomAnimal(): string {
   const animals = [
     'a cute cartoon elephant',
@@ -108,16 +95,42 @@ function getRandomAnimal(): string {
     'a cute cartoon bird',
     'a cute cartoon frog',
     'a cute cartoon bear',
+    'a cute cartoon panda',
+    'a cute cartoon tiger',
   ];
   return animals[Math.floor(Math.random() * animals.length)];
 }
 
+function getRandomAnimalGroup(): string {
+  const groups = [
+    'a cute cartoon animal family',
+    'cute cartoon animals together',
+    'a group of cute cartoon animals',
+    'cute cartoon forest animals',
+  ];
+  return groups[Math.floor(Math.random() * groups.length)];
+}
+
 function buildAnimalPrompt(prompt: string): string {
+  let transformed = prompt;
+
+  // ✅ 替换家庭/群体词汇（用动物群体）
+  transformed = transformed.replace(
+    /\b(Thai\s+)?(family|families|couple|parents?|mother|father|mom|dad|sister|brother|siblings?|grandma|grandpa|grandfather|grandmother|ancestor|relative|villager[s]?)\b/gi,
+    getRandomAnimalGroup()
+  );
+
+  // 替换单个人物词汇（用单个动物）
   const animal = getRandomAnimal();
-  let transformed = prompt
-    .replace(/\b(a\s+)?(cheerful|happy|smiling|cute|young|little|small)?\s*(Thai\s+)?(child|children|kid|kids|boy|girl|baby|toddler|student|person|people|man|woman|monk)\b(\s+around\s+\d+(\s+years?\s+old)?)?/gi, animal)
-    .replace(/\b(child|children|kid|kids|boy|girl|baby|toddler|student|person|people|man|woman|human|figure|monk)\b/gi, animal)
+  transformed = transformed
+    .replace(/\b(a\s+)?(cheerful|happy|smiling|cute|young|little|small|old|elderly|pretty|handsome|beautiful)?\s*(Thai\s+)?(child|children|kid|kids|boy|girl|baby|toddler|student|person|people|man|woman|men|women|monk|teacher|vendor|seller|farmer|worker|chef|doctor|nurse|soldier|policeman|athlete)\b(\s+around\s+\d+(\s+years?\s+old)?)?/gi, animal)
+    .replace(/\b(child|children|kid|kids|boy|girl|baby|toddler|student|person|people|man|woman|men|women|human|figure|monk|teacher|vendor|seller|farmer|worker|chef|doctor|nurse)\b/gi, animal)
     .replace(/\baround\s+\d+(\s*-\s*\d+)?\s*(year[s]?\s+old|yo)\b/gi, '')
+    // 替换 "his/her/their" 等人称代词
+    .replace(/\b(his|her|their|him|them|they|he|she)\b/gi, 'its')
+    // 替换 photorealistic 为 cartoon（避免真实人脸风格）
+    .replace(/\bphotorealistic\b/gi, 'cartoon illustration')
+    .replace(/\brealistic\b/gi, 'illustrated')
     .replace(/\s{2,}/g, ' ')
     .trim();
 
@@ -149,14 +162,14 @@ export default async function handler(req: any, res: any) {
     console.log('[IMG] Getting access token...');
     const accessToken = await getAccessToken(serviceAccountJson);
 
-    // ✅ 先查缓存（用原始 prompt 作为 key，保证相同词汇命中缓存）
+    // 先查缓存
     const cacheKey = await promptToKey(prompt);
     const cached = await getFromCache(accessToken, bucket, cacheKey);
     if (cached) {
       return res.status(200).json({ image: cached, fromCache: true });
     }
 
-    // 缓存未命中，调用 Imagen 生成
+    // 缓存未命中，生成图片
     const safePrompt = buildAnimalPrompt(prompt);
     console.log('[IMG] Cache miss, generating:', safePrompt.substring(0, 80));
 
@@ -196,7 +209,7 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'No image data', reason: filteredReason });
     }
 
-    // ✅ 存入缓存（异步，不影响响应速度）
+    // 存入缓存（异步）
     saveToCache(accessToken, bucket, cacheKey, base64);
 
     console.log('[IMG] ✅ Image generated and cached!');
