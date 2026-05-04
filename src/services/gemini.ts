@@ -28,8 +28,7 @@ function getGeminiApiKey(keyIndex: number = 1): string {
 }
 
 function getGeminiInstance(keyIndex: number = 1) {
-  const apiKey = getGeminiApiKey(keyIndex);
-  return new GoogleGenAI({ apiKey });
+  return new GoogleGenAI({ apiKey: getGeminiApiKey(keyIndex) });
 }
 
 // ============================================================
@@ -62,10 +61,9 @@ export async function generateThaiLesson(
     5. Difficulty Scaling & Logic: 
        - IF Difficulty is 'Foundations': 
          * Focus EXCLUSIVELY on the Thai Alphabet (Consonants, Vowels) and Tones.
-         * Use the user's Topic (${profile.topic}) to create creative mnemonics and background context for the characters.
+         * Use the user's Topic (${profile.topic}) to create creative mnemonics.
          * Lesson ${lessonCount}: Focus on the next set of 4 characters or a specific phonetic concept.
-         * Vocabulary should be the specific Thai characters being taught.
-         * IMPORTANT: For characters, use the standard naming convention (Character + Object, e.g., 'ก' is 'Kor Kai').
+         * IMPORTANT: For characters, use the standard naming convention (e.g., 'ก' is 'Kor Kai').
          * PHONETIC ACCURACY: Must specify if it's Mid, High, or Low class consonant.
          * Sentence Length: Use only individual letters or very simple 2-syllable pairings.
        - IF Difficulty is 'Elementary': 
@@ -75,32 +73,30 @@ export async function generateThaiLesson(
          * Focus on functional communication.
          * Sentence Length: Moderate length (8-15 words) with standard conjunctions.
        - IF Difficulty is 'Advanced': 
-         * Focus on complex scenarios, literary Thai, or professional discourse based on ${profile.topic}.
-         * Sentence Length: Long, sophisticated sentences or even short paragraphs (at least 25 words). Use complex clauses.
+         * Focus on complex scenarios based on ${profile.topic}.
+         * Sentence Length: Long, sophisticated sentences (at least 25 words).
     5. Content: 
-       - Exactly 4 vocabulary units (words or characters).
-       - UNITS MUST BE DIFFERENT FROM THESE PREVIOUS ONES: ${profile.pastVocabulary.join(', ') || 'None'}.
-       - Each unit must have: thai, phonetic, translation, audioText, and a simple example (thai + translation). 
+       - Exactly 4 vocabulary units.
+       - UNITS MUST BE DIFFERENT FROM: ${profile.pastVocabulary.join(', ') || 'None'}.
+       - Each unit must have: thai, phonetic, translation, audioText, and example (thai + translation). 
        - For characters: 
          * 'thai': The character itself (e.g., ก).
          * 'phonetic': Standard name + Class (e.g., Kor Kai [Mid class]).
          * 'translation': The meaning of the companion object (e.g., Chicken).
-         * 'audioText': The TRADITIONAL FULL NAME of the character for accurate pronunciation (e.g., 'ก ไก่' for ก, 'ฝ ฝา' for ฝ). THIS IS CRITICAL for single characters.
-    6. Language: Use ${profile.auxiliaryLanguage} for all explanations, translations, and instructions.
-    7. Formatting: Return the response in JSON format according to the specified schema.
-    8. Vocabulary Image Prompts: For each vocabulary word/character, provide a highly detailed 'imagePrompt' in English (scenic, high-quality, 3D render or professional photo style) reflecting the meaning or a mnemonic for the character in a Thai context.
-    9. Pronunciation: Ensure 'content' and 'exercise' Thai sentences are naturally phrased and suitable for Text-to-Speech synthesis.
-    10. Conciseness: Keep the lesson content concise and focused.
+         * 'audioText': The TRADITIONAL FULL NAME for TTS (e.g., 'ก ไก่').
+    6. Language: Use ${profile.auxiliaryLanguage} for all explanations and translations.
+    7. Formatting: Return JSON according to the specified schema.
+    8. Vocabulary Image Prompts: For each word, provide a detailed English 'imagePrompt' (photorealistic, Thai context).
+    9. Conciseness: Keep the lesson focused.
   `;
 
   const prompt = `Generate a ${profile.difficulty} Thai lesson.
-    Current Lesson Progress Index: ${lessonCount}.
-    Focus on ${profile.focus} skills. 
-    Topic/Context: ${profile.topic}.
-    The student is ${profile.age ?? 'any'} years old. 
-    Explain everything in ${profile.auxiliaryLanguage}.
-    ${profile.difficulty === 'Foundations' ? 'IMPORTANT: This is a zero-knowledge beginner. Start with alphabet/pronunciation basics sequentially.' : ''}
-    `;
+    Lesson Index: ${lessonCount}.
+    Focus: ${profile.focus} skills. 
+    Topic: ${profile.topic}.
+    Student age: ${profile.age ?? 'any'}. 
+    Language: ${profile.auxiliaryLanguage}.
+    ${profile.difficulty === 'Foundations' ? 'Start with alphabet/pronunciation basics sequentially.' : ''}`;
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
@@ -187,9 +183,7 @@ export async function generateThaiLesson(
 }
 
 // ============================================================
-// 图片生成
-// 通过自己的 Vercel 服务器端 API 调用 Hugging Face
-// 避免 CORS 问题，HF Token 保存在服务器端不暴露给前端
+// 图片生成（通过 Vercel 服务器端调用 Imagen 4）
 // ============================================================
 
 export async function generateImage(prompt: string): Promise<string | null> {
@@ -205,48 +199,83 @@ export async function generateImage(prompt: string): Promise<string | null> {
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       console.error("[IMG] API error:", response.status, errorData);
-
-      if (response.status === 429) {
-        return "QUOTA_EXCEEDED";
-      }
-      if (response.status === 503) {
-        // 模型冷启动，跳过图片
-        console.warn("[IMG] Model is loading, skipping image.");
-        return null;
-      }
+      if (response.status === 429) return "QUOTA_EXCEEDED";
       return null;
     }
 
     const data = await response.json();
     if (data.image) {
-      console.log("[IMG] ✅ Image received successfully!");
+      console.log("[IMG] ✅ Image received!");
       return data.image;
     }
-
-    console.warn("[IMG] No image in response");
     return null;
-
   } catch (e: any) {
-    console.error("[IMG] ❌ Error:", e?.message);
+    console.error("[IMG] Error:", e?.message);
     return null;
   }
 }
 
 // ============================================================
-// 语音播放（浏览器原生 Web Speech API）
+// 语音播放（通过 Vercel 服务器端调用 Google Cloud TTS）
 // ============================================================
 
+// 缓存：同一文字不重复请求
+const audioCache = new Map<string, string>();
+
+export async function generateTTS(text: string): Promise<string | null> {
+  // 先查缓存
+  if (audioCache.has(text)) {
+    console.log('[TTS] Cache hit:', text.substring(0, 20));
+    return audioCache.get(text)!;
+  }
+
+  try {
+    const response = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!response.ok) {
+      console.error('[TTS] API error:', response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    if (data.audio) {
+      // 存入缓存
+      audioCache.set(text, data.audio);
+      return data.audio;
+    }
+    return null;
+  } catch (e: any) {
+    console.error('[TTS] Error:', e?.message);
+    return null;
+  }
+}
+
+// 播放 base64 MP3 音频
+export function playBase64Audio(base64: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      const audio = new Audio(`data:audio/mp3;base64,${base64}`);
+      audio.onended = () => resolve();
+      audio.onerror = (e) => reject(e);
+      audio.play();
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+// 降级：浏览器原生 Web Speech API
 export function speakThai(text: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (!window.speechSynthesis) {
-      reject(new Error("Web Speech API not supported"));
-      return;
-    }
+    if (!window.speechSynthesis) { reject(new Error("Not supported")); return; }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "th-TH";
     utterance.rate = 0.85;
-    utterance.pitch = 1.0;
     const voices = window.speechSynthesis.getVoices();
     const thaiVoice = voices.find(v => v.lang.startsWith("th"));
     if (thaiVoice) utterance.voice = thaiVoice;
@@ -261,7 +290,6 @@ export async function generateAudio(text: string): Promise<string | null> {
     await speakThai(text);
     return "WEB_SPEECH_PLAYED";
   } catch (e) {
-    console.error("Web Speech API error:", e);
     return null;
   }
 }
