@@ -14,7 +14,7 @@ import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as Fireba
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db, auth } from './lib/firebase';
 import { UserProfile, ThaiLesson, Difficulty, LearningFocus, AuxiliaryLanguage, AppAchievement } from './types';
-import { generateThaiLesson, generateImage, generateTTS, playBase64Audio, speakThai, getAvailableKeys } from './services/gemini';
+import { generateThaiLesson, generateImage, generateTTS, playBase64Audio, getAvailableKeys } from './services/gemini';
 
 const APP_ACHIEVEMENTS: AppAchievement[] = [
   { id: 'bkk', province: { zh: '曼谷', en: 'Bangkok', th: 'กรุงเทพฯ' }, specialty: { zh: '大皇宫与玉佛寺', en: 'The Grand Palace', th: 'พระบรมมหาราชวัง' }, description: { zh: '泰国王室的象征，融合了泰式与欧式风格。', en: 'The symbolic heart of Bangkok, featuring the Emerald Buddha.', th: 'ศูนย์กลางทางจิตใจของปวงฃนชาวไทย' }, imagePrompt: '', specialtyImagePrompt: '', price: 100, buff: { type: 'points_multiplier', value: 1.01 } },
@@ -52,7 +52,6 @@ export default function App() {
     return saved ? parseInt(saved) : 1;
   });
 
-  // 语速设置（0.5=很慢, 1.0=正常, 1.5=快）
   const [speechRate, setSpeechRate] = useState<number>(() => {
     const saved = localStorage.getItem('sawasdee_speech_rate');
     return saved ? parseFloat(saved) : 0.85;
@@ -122,7 +121,6 @@ export default function App() {
       const nextCount = isNext ? lessonCount + 1 : 1;
       const generatedLesson = await generateThaiLesson(profile, nextCount, selectedKeyIndex);
 
-      // 图片生成
       setLoadingText(currentT.loadingImages);
       const limitedVocab = generatedLesson.vocabulary.slice(0, 4);
       let quotaExceeded = false;
@@ -189,11 +187,10 @@ export default function App() {
     return Math.round(base * pointsMultiplier);
   };
 
-  // ✅ 语音播放：优先用 Google Cloud TTS，降级用 Web Speech API
+  // 语音播放：优先 Google Cloud TTS，降级 Web Speech API
   const playAudio = async (text: string, speakText?: string) => {
     setAudioError(null);
     const textToSpeak = speakText || text;
-
     try {
       setLoadingAudio(text);
 
@@ -206,7 +203,6 @@ export default function App() {
       }
 
       // 降级：Web Speech API
-      console.warn('[Audio] Falling back to Web Speech API');
       const synth = window.speechSynthesis;
       if (!synth) { setAudioError(currentT.audioError); setLoadingAudio(null); return; }
       synth.cancel();
@@ -226,7 +222,6 @@ export default function App() {
       utterance.onend = () => setLoadingAudio(null);
       utterance.onerror = () => { setLoadingAudio(null); setAudioError(currentT.playbackError); };
       synth.speak(utterance);
-
     } catch (err) {
       setLoadingAudio(null);
       setAudioError(currentT.playbackError);
@@ -303,7 +298,7 @@ export default function App() {
       placeholderAnswer: 'Type your answer...', submit: 'Submit', correctAnswer: 'Correct Answer',
       culturalNote: 'Cultural Note', progress: 'Progress',
       milestone: (n: number) => `${n} lessons done. ${10 - (n % 10)} more to milestone!`,
-      quotaError: 'Image quota exceeded. Lesson shown without images.', audioError: 'Voice service unavailable.', playbackError: 'Playback failed.',
+      quotaError: 'Image quota exceeded.', audioError: 'Voice service unavailable.', playbackError: 'Playback failed.',
       museumDesc: 'Treasures unlocked through dedication.', balance: 'Balance',
       discoveryTitle: 'Thailand Discovery',
       discoveryProgress: (u: number, t: number, m: string) => `Unlocked ${u}/${t}. Earnings x${m}!`,
@@ -499,7 +494,6 @@ export default function App() {
                 <p className="text-slate-400">{currentT.setupDesc}</p>
               </div>
               <div className="bg-thai-blue rounded-[3rem] p-10 shadow-2xl border border-white/5 space-y-8">
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest"><User size={16} className="text-thai-gold" />{currentT.age}</label>
@@ -561,17 +555,13 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* ✅ 语音速度设置 */}
+                {/* 语音速度 */}
                 <div className="space-y-2">
                   <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest">
                     <Volume2 size={16} className="text-thai-gold" />{currentT.speechRateLabel}
                   </label>
                   <div className="flex gap-3">
-                    {[
-                      { rate: 0.6, label: currentT.speechRateSlow },
-                      { rate: 0.85, label: currentT.speechRateNormal },
-                      { rate: 1.1, label: currentT.speechRateFast },
-                    ].map(({ rate, label }) => (
+                    {[{ rate: 0.6, label: currentT.speechRateSlow }, { rate: 0.85, label: currentT.speechRateNormal }, { rate: 1.1, label: currentT.speechRateFast }].map(({ rate, label }) => (
                       <button key={rate} onClick={() => handleSpeechRateChange(rate)}
                         className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all border-2 ${speechRate === rate ? 'bg-thai-gold text-thai-navy border-thai-gold' : 'bg-white/5 text-slate-300 border-white/10 hover:border-white/30'}`}>
                         {label}
@@ -648,9 +638,14 @@ export default function App() {
                               {loadingAudio === vocab.thai ? <Loader2 size={18} className="animate-spin" /> : <Volume2 size={18} />}
                             </button>
                           </div>
+                          {/* ✅ 图片或占位符 */}
                           {vocab.imageUrl ? (
                             <img src={vocab.imageUrl} alt={vocab.thai} className="w-full h-40 object-cover rounded-xl mb-3 shadow-lg border border-white/5" />
-                          ) : null}
+                          ) : (
+                            <div className="w-full h-40 bg-thai-navy/50 border-2 border-dashed border-white/10 rounded-xl mb-3 flex items-center justify-center">
+                              <Sparkles className="text-white/10" size={32} />
+                            </div>
+                          )}
                           <p className="text-xs font-mono text-slate-500 mb-1 tracking-wider uppercase">{vocab.phonetic}</p>
                           <p className="text-lg font-black text-white mb-3">{vocab.translation}</p>
                           <div className="text-xs space-y-1 pt-3 border-t border-white/5">
@@ -697,9 +692,14 @@ export default function App() {
                               {showExerciseTranslations[idx] && (
                                 <motion.p initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="text-sm text-slate-400 italic">{ex.question.translation}</motion.p>
                               )}
-                              {ex.question.imageUrl && (
+                              {/* ✅ 练习题图片或占位符 */}
+                              {ex.question.imageUrl ? (
                                 <img src={ex.question.imageUrl} alt="" className="w-full max-w-sm h-48 object-cover rounded-3xl shadow-lg border border-white/5" />
-                              )}
+                              ) : ex.question.imagePrompt ? (
+                                <div className="w-full max-w-sm h-48 bg-thai-navy/50 border-2 border-dashed border-white/10 rounded-3xl flex items-center justify-center">
+                                  <Sparkles className="text-white/10" size={32} />
+                                </div>
+                              ) : null}
                             </div>
                             <button onClick={() => setShowExerciseTranslations(prev => ({ ...prev, [idx]: !prev[idx] }))} className="p-2.5 rounded-xl bg-white/5 text-slate-400 hover:bg-white/10 flex-shrink-0 border border-white/5">
                               <Languages size={18} />
