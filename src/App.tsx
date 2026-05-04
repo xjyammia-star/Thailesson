@@ -48,11 +48,8 @@ export default function App() {
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [showResults, setShowResults] = useState(false);
   const [showExerciseTranslations, setShowExerciseTranslations] = useState<Record<number, boolean>>({});
-
-  // ✅ 0 = 使用 Doubao（默认），1/2/3 = 使用对应 Gemini Key
   const [selectedKeyIndex, setSelectedKeyIndex] = useState<number>(0);
   const [showKeyDropdown, setShowKeyDropdown] = useState(false);
-
   const [speechRate, setSpeechRate] = useState<number>(() => {
     const saved = localStorage.getItem('sawasdee_speech_rate');
     return saved ? parseFloat(saved) : 0.85;
@@ -65,7 +62,6 @@ export default function App() {
   const profileRef = useRef(profile);
   useEffect(() => { profileRef.current = profile; }, [profile]);
 
-  // 点击外部关闭下拉菜单
   useEffect(() => {
     const handleClick = () => setShowKeyDropdown(false);
     if (showKeyDropdown) document.addEventListener('click', handleClick);
@@ -109,17 +105,28 @@ export default function App() {
       setLoadingText(currentT.loadingImages);
       const limitedVocab = generatedLesson.vocabulary.slice(0, 4);
       let quotaExceeded = false;
-      const imagesToGenerate: { prompt: string, callback: (url: string) => void }[] = [];
-      limitedVocab.forEach(v => { imagesToGenerate.push({ prompt: v.imagePrompt, callback: (url) => { v.imageUrl = url; } }); });
-      generatedLesson.exercise.forEach(ex => { if (ex.question.imagePrompt) imagesToGenerate.push({ prompt: ex.question.imagePrompt, callback: (url) => { ex.question.imageUrl = url; } }); });
+
+      // ✅ 传递泰文词汇作为缓存 key
+      const imagesToGenerate: { prompt: string, thaiWord?: string, callback: (url: string) => void }[] = [];
+      limitedVocab.forEach(v => {
+        imagesToGenerate.push({ prompt: v.imagePrompt, thaiWord: v.thai, callback: (url) => { v.imageUrl = url; } });
+      });
+      generatedLesson.exercise.forEach(ex => {
+        if (ex.question.imagePrompt) {
+          imagesToGenerate.push({ prompt: ex.question.imagePrompt, callback: (url) => { ex.question.imageUrl = url; } });
+        }
+      });
+
       for (const item of imagesToGenerate) {
         if (quotaExceeded) break;
         try {
-          const imageUrl = await generateImage(item.prompt);
+          // ✅ 传递 thaiWord 给 generateImage
+          const imageUrl = await generateImage(item.prompt, item.thaiWord);
           if (imageUrl === "QUOTA_EXCEEDED") { quotaExceeded = true; } else if (imageUrl) { item.callback(imageUrl); }
           await new Promise(resolve => setTimeout(resolve, 500));
         } catch (e) { console.warn("Image generation failed:", e); }
       }
+
       if (quotaExceeded) setError(currentT.quotaError);
       const finalLesson = { ...generatedLesson, vocabulary: limitedVocab };
       setLesson(finalLesson); setLessonCount(nextCount); setStep('learning');
@@ -227,7 +234,7 @@ export default function App() {
       levels: { Foundations: 'Foundations', Elementary: 'Elementary', Intermediate: 'Intermediate', Advanced: 'Advanced' },
       focuses: { Listening: 'Listening', Speaking: 'Speaking', Reading: 'Reading', Writing: 'Writing', Comprehensive: 'Comprehensive' },
       focusDescriptions: { Listening: 'Sharpen phoneme recognition.', Speaking: 'Simulate real dialogue.', Reading: 'Text decomposition.', Writing: 'Word construction.', Comprehensive: 'Balanced development.' },
-      levelDescriptions: { Foundations: 'For beginners. Consonants, vowels, and tones.', Elementary: 'Common vocabulary and basic grammar.', Intermediate: 'Practical conversations.', Advanced: 'Master native expressions.' },
+      levelDescriptions: { Foundations: 'For beginners. Consonants, vowels, and tones.', Elementary: 'Common vocabulary and grammar.', Intermediate: 'Practical conversations.', Advanced: 'Master native expressions.' },
       goalRewardLabel: (r: number) => `Reward: ✧ ${r} points`,
       nextLesson: 'Next Lesson', keyVocab: 'Key Vocabulary', reading: 'Reading', interactive: 'Exercises',
       placeholderAnswer: 'Type your answer...', submit: 'Submit', correctAnswer: 'Correct Answer',
@@ -274,11 +281,7 @@ export default function App() {
   };
 
   const currentT = t[profile.auxiliaryLanguage === 'th' ? 'th' : profile.auxiliaryLanguage === 'en' ? 'en' : 'zh'];
-
-  // ✅ Key 选择器标签
-  const currentModelLabel = selectedKeyIndex === 0
-    ? (doubaoAvailable ? 'Doubao' : 'Gemini K1')
-    : `Gemini K${selectedKeyIndex}`;
+  const currentModelLabel = selectedKeyIndex === 0 ? (doubaoAvailable ? 'Doubao' : 'Gemini K1') : `Gemini K${selectedKeyIndex}`;
 
   const MuseumView = () => {
     const [mLang, setMLang] = useState<'zh' | 'en' | 'th'>('zh');
@@ -410,12 +413,10 @@ export default function App() {
               </div>
             )}
 
-            {/* ✅ AI 模型选择器（下拉菜单） */}
+            {/* ✅ AI 模型下拉选择器 */}
             <div className="relative" onClick={e => e.stopPropagation()}>
-              <button
-                onClick={() => setShowKeyDropdown(!showKeyDropdown)}
-                className="flex items-center gap-2 px-3 py-2 bg-white/5 rounded-2xl border border-white/10 text-xs font-bold text-slate-300 hover:bg-white/10 transition-all"
-              >
+              <button onClick={() => setShowKeyDropdown(!showKeyDropdown)}
+                className="flex items-center gap-2 px-3 py-2 bg-white/5 rounded-2xl border border-white/10 text-xs font-bold text-slate-300 hover:bg-white/10 transition-all">
                 <Key size={14} className="text-thai-gold" />
                 <span className="hidden sm:inline">{currentModelLabel}</span>
                 <ChevronDown size={12} className={`transition-transform ${showKeyDropdown ? 'rotate-180' : ''}`} />
@@ -426,33 +427,29 @@ export default function App() {
                     className="absolute right-0 top-full mt-2 w-52 bg-thai-blue border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50">
                     <div className="p-2 space-y-1">
                       <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest px-3 pt-1 pb-2">{currentT.modelLabel}</p>
-                      {/* Doubao 选项 */}
                       <button onClick={() => { setSelectedKeyIndex(0); setShowKeyDropdown(false); }}
                         className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${selectedKeyIndex === 0 ? 'bg-thai-gold text-thai-navy' : 'text-slate-300 hover:bg-white/5'}`}>
                         <span className="text-base">🤖</span>
-                        <div className="text-left">
+                        <div className="text-left flex-1">
                           <div>{currentT.modelDoubao}</div>
                           <div className={`text-[10px] ${selectedKeyIndex === 0 ? 'text-thai-navy/60' : 'text-slate-500'}`}>Seed 2.0 Lite</div>
                         </div>
-                        {selectedKeyIndex === 0 && <CheckCircle2 size={14} className="ml-auto" />}
+                        {selectedKeyIndex === 0 && <CheckCircle2 size={14} />}
                       </button>
-                      {/* Gemini Keys 分隔线 */}
                       <div className="border-t border-white/5 pt-1 mt-1">
                         <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest px-3 py-1">{currentT.modelGemini}</p>
                         {availableKeys.filter(k => k.available).map(k => (
                           <button key={k.index} onClick={() => { setSelectedKeyIndex(k.index); setShowKeyDropdown(false); }}
                             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${selectedKeyIndex === k.index ? 'bg-thai-gold text-thai-navy' : 'text-slate-300 hover:bg-white/5'}`}>
                             <Key size={14} />
-                            <div className="text-left">
+                            <div className="text-left flex-1">
                               <div>{k.label}</div>
                               <div className={`text-[10px] ${selectedKeyIndex === k.index ? 'text-thai-navy/60' : 'text-slate-500'}`}>gemini-2.5-flash</div>
                             </div>
-                            {selectedKeyIndex === k.index && <CheckCircle2 size={14} className="ml-auto" />}
+                            {selectedKeyIndex === k.index && <CheckCircle2 size={14} />}
                           </button>
                         ))}
-                        {availableKeys.every(k => !k.available) && (
-                          <p className="text-xs text-slate-500 px-3 py-2">未配置 Gemini Key</p>
-                        )}
+                        {availableKeys.every(k => !k.available) && <p className="text-xs text-slate-500 px-3 py-2">未配置 Gemini Key</p>}
                       </div>
                     </div>
                   </motion.div>
@@ -492,7 +489,6 @@ export default function App() {
                 <h2 className="text-4xl font-display font-black mb-4 text-white uppercase tracking-tight">{currentT.setupTitle}</h2>
                 <p className="text-slate-400">{currentT.setupDesc}</p>
               </div>
-              {/* 今日进度条 */}
               <div className="bg-thai-blue rounded-3xl p-6 mb-6 border border-white/5">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-sm font-black text-slate-400 uppercase tracking-widest">{currentT.todayProgress}</span>
