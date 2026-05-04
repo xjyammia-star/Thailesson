@@ -1,6 +1,6 @@
 // api/generate-image.ts
 // 使用 Google 服务账号认证调用 Vertex AI Imagen 4
-// 策略：把 prompt 中的人物替换成可爱卡通动物，保留动作和场景
+// 带 Google Cloud Storage 缓存：同一词汇只生成一次图片
 
 async function getAccessToken(serviceAccountJson: string): Promise<string> {
   const sa = JSON.parse(serviceAccountJson);
@@ -39,7 +39,65 @@ async function getAccessToken(serviceAccountJson: string): Promise<string> {
   return tokenData.access_token;
 }
 
-// 随机选一个可爱的泰国风格卡通动物
+// 把 prompt 转成稳定的缓存 key（用 MD5 hash）
+async function promptToKey(prompt: string): Promise<string> {
+  const crypto = await import('crypto');
+  return crypto.createHash('md5').update(prompt.toLowerCase().trim()).digest('hex');
+}
+
+// 从 GCS 读取缓存图片，返回 base64 data URL
+async function getFromCache(
+  accessToken: string,
+  bucket: string,
+  key: string
+): Promise<string | null> {
+  try {
+    const response = await fetch(
+      `https://storage.googleapis.com/storage/v1/b/${bucket}/o/${key}.png?alt=media`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!response.ok) return null;
+    const buffer = await response.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString('base64');
+    console.log('[IMG] ✅ Cache hit:', key);
+    return `data:image/png;base64,${base64}`;
+  } catch {
+    return null;
+  }
+}
+
+// 把图片存入 GCS 缓存
+async function saveToCache(
+  accessToken: string,
+  bucket: string,
+  key: string,
+  base64: string
+): Promise<void> {
+  try {
+    const imageBuffer = Buffer.from(base64, 'base64');
+    const response = await fetch(
+      `https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=${key}.png`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'image/png',
+        },
+        body: imageBuffer,
+      }
+    );
+    if (response.ok) {
+      console.log('[IMG] 💾 Saved to cache:', key);
+    } else {
+      const err = await response.text();
+      console.warn('[IMG] Cache save failed:', err.substring(0, 100));
+    }
+  } catch (e: any) {
+    console.warn('[IMG] Cache save error:', e?.message);
+  }
+}
+
+// 把人物替换成卡通动物，保留动作和场景
 function getRandomAnimal(): string {
   const animals = [
     'a cute cartoon elephant',
@@ -54,23 +112,15 @@ function getRandomAnimal(): string {
   return animals[Math.floor(Math.random() * animals.length)];
 }
 
-// ✅ 把人物替换成卡通动物，保留动作和场景
 function buildAnimalPrompt(prompt: string): string {
   const animal = getRandomAnimal();
-
-  // 替换人物词汇为卡通动物
   let transformed = prompt
-    // 带年龄描述的人物
     .replace(/\b(a\s+)?(cheerful|happy|smiling|cute|young|little|small)?\s*(Thai\s+)?(child|children|kid|kids|boy|girl|baby|toddler|student|person|people|man|woman|monk)\b(\s+around\s+\d+(\s+years?\s+old)?)?/gi, animal)
-    // 单独的人物词
     .replace(/\b(child|children|kid|kids|boy|girl|baby|toddler|student|person|people|man|woman|human|figure|monk)\b/gi, animal)
-    // 年龄描述
     .replace(/\baround\s+\d+(\s*-\s*\d+)?\s*(year[s]?\s+old|yo)\b/gi, '')
-    // 多余空格
     .replace(/\s{2,}/g, ' ')
     .trim();
 
-  // 如果替换后 prompt 太短或没有意义，构建一个基础 prompt
   if (transformed.length < 15) {
     transformed = `${animal} in a Thai setting`;
   }
@@ -88,6 +138,7 @@ export default async function handler(req: any, res: any) {
 
   const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT || '';
   const projectId = process.env.GOOGLE_CLOUD_PROJECT || '';
+  const bucket = process.env.GCS_BUCKET_NAME || 'thailesson-image';
 
   if (!serviceAccountJson || !projectId) {
     console.error('[IMG] Missing GOOGLE_SERVICE_ACCOUNT or GOOGLE_CLOUD_PROJECT');
@@ -98,9 +149,16 @@ export default async function handler(req: any, res: any) {
     console.log('[IMG] Getting access token...');
     const accessToken = await getAccessToken(serviceAccountJson);
 
+    // ✅ 先查缓存（用原始 prompt 作为 key，保证相同词汇命中缓存）
+    const cacheKey = await promptToKey(prompt);
+    const cached = await getFromCache(accessToken, bucket, cacheKey);
+    if (cached) {
+      return res.status(200).json({ image: cached, fromCache: true });
+    }
+
+    // 缓存未命中，调用 Imagen 生成
     const safePrompt = buildAnimalPrompt(prompt);
-    console.log('[IMG] Original:', prompt.substring(0, 60));
-    console.log('[IMG] Animal prompt:', safePrompt.substring(0, 80));
+    console.log('[IMG] Cache miss, generating:', safePrompt.substring(0, 80));
 
     const response = await fetch(
       `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/imagen-4.0-fast-generate-001:predict`,
@@ -138,8 +196,11 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'No image data', reason: filteredReason });
     }
 
-    console.log('[IMG] ✅ Image generated successfully!');
-    return res.status(200).json({ image: `data:image/png;base64,${base64}` });
+    // ✅ 存入缓存（异步，不影响响应速度）
+    saveToCache(accessToken, bucket, cacheKey, base64);
+
+    console.log('[IMG] ✅ Image generated and cached!');
+    return res.status(200).json({ image: `data:image/png;base64,${base64}`, fromCache: false });
 
   } catch (e: any) {
     console.error('[IMG] Error:', e?.message);
