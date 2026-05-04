@@ -14,21 +14,21 @@ import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as Fireba
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db, auth } from './lib/firebase';
 import { UserProfile, ThaiLesson, Difficulty, LearningFocus, AuxiliaryLanguage, AppAchievement } from './types';
-import { generateThaiLesson, generateImage, generateTTS, playBase64Audio, getAvailableKeys } from './services/gemini';
+import { generateThaiLesson, generateImage, generateTTS, playBase64Audio, getAvailableKeys, isDoubaoAvailable } from './services/gemini';
 
 const GCS_BASE = 'https://storage.googleapis.com/thailesson-image';
 
 const APP_ACHIEVEMENTS: AppAchievement[] = [
-  { id: 'bkk', province: { zh: '曼谷', en: 'Bangkok', th: 'กรุงเทพฯ' }, specialty: { zh: '大皇宫与玉佛寺', en: 'The Grand Palace', th: 'พระบรมมหาราชวัง' }, description: { zh: '泰国王室的象征，融合了泰式与欧式风格。', en: 'The symbolic heart of Bangkok, featuring the Emerald Buddha.', th: 'ศูนย์กลางทางจิตใจของปวงฃนชาวไทย' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_bkk.png`, price: 100, buff: { type: 'points_multiplier', value: 1.01 } },
-  { id: 'aya', province: { zh: '大城', en: 'Ayutthaya', th: 'พระนครศรีอยุธยา' }, specialty: { zh: '玛哈泰寺树中佛', en: 'Buddha Head in Tree', th: 'เศียรพระในรากไม้' }, description: { zh: '大城王朝时期的遗迹，最著名的是被古树根紧紧包裹住的石佛头部。', en: 'An ancient world heritage site featuring the famous Buddha head in roots.', th: 'มรดกโลกที่ล้ำค่าในวัดมหาธาตุ' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_aya.png`, price: 350, buff: { type: 'points_multiplier', value: 1.02 } },
-  { id: 'kcn', province: { zh: '北碧', en: 'Kanchanaburi', th: 'กาญจนบุรี' }, specialty: { zh: '桂河大桥', en: 'Bridge on River Kwai', th: 'สะพานข้ามแม่น้ำแคว' }, description: { zh: '著名的二战历史遗迹，见证了历史的沧桑。', en: 'A historic WWII landmark over the jungle river.', th: 'สะพานเหล็กประวัติศาสตร์ในสงครามโลก' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_kcn.png`, price: 1000, buff: { type: 'points_multiplier', value: 1.05 } },
-  { id: 'lpb', province: { zh: '华富里', en: 'Lopburi', th: 'ลพบุรี' }, specialty: { zh: '三峰塔与猴子', en: 'Phra Prang Sam Yod', th: 'พระปรางค์สามยอด' }, description: { zh: '古老的高棉风格遗迹，以成群结队的猴子闻名。', en: 'Ancient Khmer-style towers famous for hundreds of monkeys.', th: 'ปราสาทขอมโบราณและฝูงลิงที่เป็นเอกลักษณ์' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_lpb.png`, price: 3000, buff: { type: 'points_multiplier', value: 1.10 } },
-  { id: 'pkt', province: { zh: '普吉', en: 'Phuket', th: 'ภูเก็ต' }, specialty: { zh: '中葡风情老城', en: 'Phuket Old Town', th: 'ย่านเมืองเก่าภูเก็ต' }, description: { zh: '保留了大量色彩斑斓的"中葡式建筑"。', en: 'A historic district featuring vibrant Sino-Portuguese shophouses.', th: 'ย่านตึกเก่าศิลปะชิโนโปรตุกีส' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_pkt.png`, price: 10000, buff: { type: 'points_multiplier', value: 1.20 } },
-  { id: 'samui', province: { zh: '苏梅岛', en: 'Koh Samui', th: 'เกาะสมุย' }, specialty: { zh: '巨型大佛', en: 'Big Buddha Temple', th: 'วัดพระใหญ่' }, description: { zh: '坐落于小岛上的12米高金色大佛。', en: 'A 12-meter tall golden Buddha statue on a small island.', th: 'พระพุทธรูปทองคำขนาดใหญ่' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_samui.png`, price: 30000, buff: { type: 'points_multiplier', value: 1.35 } },
-  { id: 'cnx', province: { zh: '清迈', en: 'Chiang Mai', th: 'เชียงใหม่' }, specialty: { zh: '素帖寺', en: 'Wat Phra That Doi Suthep', th: 'วัดพระธาตุดอยสุเทพ' }, description: { zh: '清迈最神圣的寺庙，坐落于素帖山上。', en: "Chiang Mai's most sacred temple on a mountain.", th: 'วัดศักดิ์สิทธิ์บนดอยสุเทพ' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_cnx.png`, price: 80000, buff: { type: 'points_multiplier', value: 1.60 } },
-  { id: 'skh', province: { zh: '素可泰', en: 'Sukhothai', th: 'สุโขทัย' }, specialty: { zh: '西昌寺大佛', en: 'Phra Achana', th: 'วัดศรีชุม' }, description: { zh: '素可泰王朝的艺术精髓，坐佛庄严神圣。', en: "Thailand's first capital with a massive seated Buddha.", th: 'พระอัจนะในวัดศรีชุม' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_skh.png`, price: 200000, buff: { type: 'points_multiplier', value: 2.00 } },
-  { id: 'kbi', province: { zh: '甲米', en: 'Krabi', th: 'กระบี่' }, specialty: { zh: '莱利海滩', en: 'Railay Beach', th: 'ไร่เลย์' }, description: { zh: '甲米以壮丽的喀斯特地貌闻名，莱利海滩是攀岩天堂。', en: 'Famous limestone karsts and a global rock-climbing destination.', th: 'หน้าผาหินปูนและหาดทรายขาว' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_kbi.png`, price: 500000, buff: { type: 'points_multiplier', value: 3.00 } },
-  { id: 'loe', province: { zh: '黎府', en: 'Loei', th: 'เลย' }, specialty: { zh: '鬼脸节面具', en: 'Phi Ta Khon Mask', th: 'ผีตาโขน' }, description: { zh: '手工彩绘的面具有着夸张的鼻子和艳丽的图案。', en: 'Vibrant handmade masks from the Phi Ta Khon festival.', th: 'งานเทศกาลผีตาโขน' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_loe.png`, price: 1200000, buff: { type: 'points_multiplier', value: 5.00 } }
+  { id: 'bkk', province: { zh: '曼谷', en: 'Bangkok', th: 'กรุงเทพฯ' }, specialty: { zh: '大皇宫与玉佛寺', en: 'The Grand Palace', th: 'พระบรมมหาราชวัง' }, description: { zh: '泰国王室的象征，融合了泰式与欧式风格。', en: 'The symbolic heart of Bangkok.', th: 'ศูนย์กลางทางจิตใจของปวงฃนชาวไทย' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_bkk.png`, price: 100, buff: { type: 'points_multiplier', value: 1.01 } },
+  { id: 'aya', province: { zh: '大城', en: 'Ayutthaya', th: 'พระนครศรีอยุธยา' }, specialty: { zh: '玛哈泰寺树中佛', en: 'Buddha Head in Tree', th: 'เศียรพระในรากไม้' }, description: { zh: '大城王朝时期的遗迹，最著名的是被古树根紧紧包裹住的石佛头部。', en: 'Famous Buddha head entwined in tree roots.', th: 'มรดกโลกที่ล้ำค่าในวัดมหาธาตุ' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_aya.png`, price: 350, buff: { type: 'points_multiplier', value: 1.02 } },
+  { id: 'kcn', province: { zh: '北碧', en: 'Kanchanaburi', th: 'กาญจนบุรี' }, specialty: { zh: '桂河大桥', en: 'Bridge on River Kwai', th: 'สะพานข้ามแม่น้ำแคว' }, description: { zh: '著名的二战历史遗迹。', en: 'A historic WWII landmark.', th: 'สะพานเหล็กประวัติศาสตร์' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_kcn.png`, price: 1000, buff: { type: 'points_multiplier', value: 1.05 } },
+  { id: 'lpb', province: { zh: '华富里', en: 'Lopburi', th: 'ลพบุรี' }, specialty: { zh: '三峰塔与猴子', en: 'Phra Prang Sam Yod', th: 'พระปรางค์สามยอด' }, description: { zh: '古老的高棉风格遗迹，以成群结队的猴子闻名。', en: 'Ancient Khmer towers famous for monkeys.', th: 'ปราสาทขอมโบราณและฝูงลิง' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_lpb.png`, price: 3000, buff: { type: 'points_multiplier', value: 1.10 } },
+  { id: 'pkt', province: { zh: '普吉', en: 'Phuket', th: 'ภูเก็ต' }, specialty: { zh: '中葡风情老城', en: 'Phuket Old Town', th: 'ย่านเมืองเก่าภูเก็ต' }, description: { zh: '保留了大量色彩斑斓的中葡式建筑。', en: 'Vibrant Sino-Portuguese shophouses.', th: 'ย่านตึกเก่าศิลปะชิโนโปรตุกีส' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_pkt.png`, price: 10000, buff: { type: 'points_multiplier', value: 1.20 } },
+  { id: 'samui', province: { zh: '苏梅岛', en: 'Koh Samui', th: 'เกาะสมุย' }, specialty: { zh: '巨型大佛', en: 'Big Buddha Temple', th: 'วัดพระใหญ่' }, description: { zh: '坐落于小岛上的12米高金色大佛。', en: '12-meter golden Buddha on a small island.', th: 'พระพุทธรูปทองคำขนาดใหญ่' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_samui.png`, price: 30000, buff: { type: 'points_multiplier', value: 1.35 } },
+  { id: 'cnx', province: { zh: '清迈', en: 'Chiang Mai', th: 'เชียงใหม่' }, specialty: { zh: '素帖寺', en: 'Wat Phra That Doi Suthep', th: 'วัดพระธาตุดอยสุเทพ' }, description: { zh: '清迈最神圣的寺庙，坐落于素帖山上。', en: "Chiang Mai's most sacred mountain temple.", th: 'วัดศักดิ์สิทธิ์บนดอยสุเทพ' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_cnx.png`, price: 80000, buff: { type: 'points_multiplier', value: 1.60 } },
+  { id: 'skh', province: { zh: '素可泰', en: 'Sukhothai', th: 'สุโขทัย' }, specialty: { zh: '西昌寺大佛', en: 'Phra Achana', th: 'วัดศรีชุม' }, description: { zh: '素可泰王朝的艺术精髓，坐佛庄严神圣。', en: "Massive seated Buddha at Thailand's first capital.", th: 'พระอัจนะในวัดศรีชุม' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_skh.png`, price: 200000, buff: { type: 'points_multiplier', value: 2.00 } },
+  { id: 'kbi', province: { zh: '甲米', en: 'Krabi', th: 'กระบี่' }, specialty: { zh: '莱利海滩', en: 'Railay Beach', th: 'ไร่เลย์' }, description: { zh: '甲米以壮丽的喀斯特地貌闻名，莱利海滩是攀岩天堂。', en: 'Limestone karsts and rock-climbing paradise.', th: 'หน้าผาหินปูนและหาดทรายขาว' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_kbi.png`, price: 500000, buff: { type: 'points_multiplier', value: 3.00 } },
+  { id: 'loe', province: { zh: '黎府', en: 'Loei', th: 'เลย' }, specialty: { zh: '鬼脸节面具', en: 'Phi Ta Khon Mask', th: 'ผีตาโขน' }, description: { zh: '手工彩绘的面具有着夸张的鼻子和艳丽的图案。', en: 'Vibrant handmade masks from the ghost festival.', th: 'งานเทศกาลผีตาโขน' }, imagePrompt: '', specialtyImagePrompt: `${GCS_BASE}/achievement_loe.png`, price: 1200000, buff: { type: 'points_multiplier', value: 5.00 } }
 ];
 
 export default function App() {
@@ -48,21 +48,29 @@ export default function App() {
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [showResults, setShowResults] = useState(false);
   const [showExerciseTranslations, setShowExerciseTranslations] = useState<Record<number, boolean>>({});
-  const [selectedKeyIndex, setSelectedKeyIndex] = useState<number>(() => {
-    const saved = localStorage.getItem('sawasdee_key_index');
-    return saved ? parseInt(saved) : 1;
-  });
+
+  // ✅ 0 = 使用 Doubao（默认），1/2/3 = 使用对应 Gemini Key
+  const [selectedKeyIndex, setSelectedKeyIndex] = useState<number>(0);
+  const [showKeyDropdown, setShowKeyDropdown] = useState(false);
+
   const [speechRate, setSpeechRate] = useState<number>(() => {
     const saved = localStorage.getItem('sawasdee_speech_rate');
     return saved ? parseFloat(saved) : 0.85;
   });
 
   const availableKeys = getAvailableKeys();
-  const handleKeySelect = (index: number) => { setSelectedKeyIndex(index); localStorage.setItem('sawasdee_key_index', String(index)); };
+  const doubaoAvailable = isDoubaoAvailable();
   const handleSpeechRateChange = (rate: number) => { setSpeechRate(rate); localStorage.setItem('sawasdee_speech_rate', String(rate)); };
 
   const profileRef = useRef(profile);
   useEffect(() => { profileRef.current = profile; }, [profile]);
+
+  // 点击外部关闭下拉菜单
+  useEffect(() => {
+    const handleClick = () => setShowKeyDropdown(false);
+    if (showKeyDropdown) document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, [showKeyDropdown]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -75,9 +83,9 @@ export default function App() {
           if (cloudData.lastLessonDate !== today) { cloudData.lessonsCompletedToday = 0; cloudData.lastLessonDate = today; await setDoc(doc(db, 'users', firebaseUser.uid), cloudData); }
           setProfile(cloudData);
         } else {
-          const initialProfile: UserProfile = { ...profileRef.current, userId: firebaseUser.uid, lastLessonDate: today, lessonsCompletedToday: 0 };
-          await setDoc(doc(db, 'users', firebaseUser.uid), initialProfile);
-          setProfile(initialProfile);
+          const init: UserProfile = { ...profileRef.current, userId: firebaseUser.uid, lastLessonDate: today, lessonsCompletedToday: 0 };
+          await setDoc(doc(db, 'users', firebaseUser.uid), init);
+          setProfile(init);
         }
       }
     });
@@ -103,7 +111,7 @@ export default function App() {
       let quotaExceeded = false;
       const imagesToGenerate: { prompt: string, callback: (url: string) => void }[] = [];
       limitedVocab.forEach(v => { imagesToGenerate.push({ prompt: v.imagePrompt, callback: (url) => { v.imageUrl = url; } }); });
-      generatedLesson.exercise.forEach(ex => { if (ex.question.imagePrompt) { imagesToGenerate.push({ prompt: ex.question.imagePrompt, callback: (url) => { ex.question.imageUrl = url; } }); } });
+      generatedLesson.exercise.forEach(ex => { if (ex.question.imagePrompt) imagesToGenerate.push({ prompt: ex.question.imagePrompt, callback: (url) => { ex.question.imageUrl = url; } }); });
       for (const item of imagesToGenerate) {
         if (quotaExceeded) break;
         try {
@@ -129,7 +137,7 @@ export default function App() {
   };
 
   const unlockedCount = profile.unlockedAchievements?.length || 0;
-  const pointsMultiplier = APP_ACHIEVEMENTS.filter(a => profile.unlockedAchievements?.includes(a.id)).reduce((acc, curr) => acc + (curr.buff?.value ? curr.buff.value - 1 : 0), 1) + (unlockedCount >= 10 ? 10.0 : (unlockedCount >= 9 ? 3.0 : (unlockedCount >= 5 ? 1.0 : 0)));
+  const pointsMultiplier = APP_ACHIEVEMENTS.filter(a => profile.unlockedAchievements?.includes(a.id)).reduce((acc, curr) => acc + (curr.buff?.value ? curr.buff.value - 1 : 0), 1) + (unlockedCount >= 10 ? 10.0 : unlockedCount >= 9 ? 3.0 : unlockedCount >= 5 ? 1.0 : 0);
   const calculatePointsReward = (goal: number, isStreak: boolean) => { let base = goal === 1 ? 10 : goal === 3 ? 30 : goal === 5 ? 50 : 150; if (goal === 10 && isStreak) base += 50; return Math.round(base * pointsMultiplier); };
 
   const playAudio = async (text: string, speakText?: string) => {
@@ -185,8 +193,7 @@ export default function App() {
       loadingImages: '正在为您生成精美插图...', loadingWriting: '正在为你编写专属教材...',
       loadingMagic: '魔法正在发生，请稍等！', loadingAI: 'AI 正在根据你的偏好整合泰语知识点。',
       dailyGoal: '今日目标', museum: '成就馆', museumTitle: '成就博物馆',
-      apiKeyLabel: 'API Key 选择', speechRateLabel: '语音速度',
-      speechRateSlow: '慢', speechRateNormal: '正常', speechRateFast: '快',
+      speechRateLabel: '语音速度', speechRateSlow: '慢', speechRateNormal: '正常', speechRateFast: '快',
       streakLabel: '连续天数', pointsLabel2: '积分', todayProgress: '今日进度',
       levels: { Foundations: '入门 (发音/字母)', Elementary: '初级 (基础词汇)', Intermediate: '中级 (日常对话)', Advanced: '高级 (地道表达)' },
       focuses: { Listening: '听力', Speaking: '口语', Reading: '阅读', Writing: '写作', Comprehensive: '综合' },
@@ -196,14 +203,15 @@ export default function App() {
       nextLesson: '下一课', keyVocab: '核心词汇', reading: '阅读训练', interactive: '互动练习',
       placeholderAnswer: '输入你的答案...', submit: '提交答案', correctAnswer: '正确答案',
       culturalNote: '文化小贴士', milestone: (n: number) => `今日已完成 ${n} / ${profile.dailyGoal} 课时`,
-      quotaError: '图像生成配额已用完，本课不显示图片。', audioError: '语音服务暂时不可用。', playbackError: '播放失败，请重试。',
+      quotaError: '图像生成配额已用完。', audioError: '语音服务暂时不可用。', playbackError: '播放失败，请重试。',
       museumDesc: '通过辛勤学习解锁的泰式珍宝。', balance: '可用余额',
-      discoveryTitle: '泰国文化探索之旅', discoveryProgress: (u: number, t: number, m: string) => `已解锁 ${u}/${t} 件珍宝，课程收益提升 x${m} 倍！`,
+      discoveryTitle: '泰国文化探索之旅', discoveryProgress: (u: number, t: number, m: string) => `已解锁 ${u}/${t} 件珍宝，收益提升 x${m} 倍！`,
       regions: { exploring: '初探泰国', southern: '南部风情', northern: '北部遗迹', ultimate: '终极艺术' },
       pointsLabel: '积分', unlockWith: '解锁需要', login: '登录保存进度', home: '首页',
       goalReached: '目标达成！', perfectScore: '完美！', lessonDone: '完成！',
       earned: '获得', returnHome: '返回首页', goalBonus: (r: number) => `目标达成奖励：+${r} 积分！`,
       locked: '未解锁', unlocked: '已解锁',
+      modelLabel: '文字模型', modelDoubao: 'Doubao（默认）', modelGemini: 'Gemini 备用',
     },
     en: {
       setupTitle: 'Customize Your Thai Lesson', setupDesc: 'Tell AI your needs and we will generate the best content for you.',
@@ -214,13 +222,12 @@ export default function App() {
       loadingImages: 'Generating illustrations...', loadingWriting: 'Writing your lesson...',
       loadingMagic: 'Magic happening!', loadingAI: 'AI integrating Thai knowledge for you.',
       dailyGoal: 'Daily Goal', museum: 'Museum', museumTitle: 'Museum of Achievements',
-      apiKeyLabel: 'API Key', speechRateLabel: 'Speech Speed',
-      speechRateSlow: 'Slow', speechRateNormal: 'Normal', speechRateFast: 'Fast',
+      speechRateLabel: 'Speech Speed', speechRateSlow: 'Slow', speechRateNormal: 'Normal', speechRateFast: 'Fast',
       streakLabel: 'Day streak', pointsLabel2: 'Points', todayProgress: "Today's Progress",
       levels: { Foundations: 'Foundations', Elementary: 'Elementary', Intermediate: 'Intermediate', Advanced: 'Advanced' },
       focuses: { Listening: 'Listening', Speaking: 'Speaking', Reading: 'Reading', Writing: 'Writing', Comprehensive: 'Comprehensive' },
       focusDescriptions: { Listening: 'Sharpen phoneme recognition.', Speaking: 'Simulate real dialogue.', Reading: 'Text decomposition.', Writing: 'Word construction.', Comprehensive: 'Balanced development.' },
-      levelDescriptions: { Foundations: 'For beginners. Start with consonants, vowels, and tones.', Elementary: 'Common vocabulary and basic grammar.', Intermediate: 'Practical conversations.', Advanced: 'Master native expressions.' },
+      levelDescriptions: { Foundations: 'For beginners. Consonants, vowels, and tones.', Elementary: 'Common vocabulary and basic grammar.', Intermediate: 'Practical conversations.', Advanced: 'Master native expressions.' },
       goalRewardLabel: (r: number) => `Reward: ✧ ${r} points`,
       nextLesson: 'Next Lesson', keyVocab: 'Key Vocabulary', reading: 'Reading', interactive: 'Exercises',
       placeholderAnswer: 'Type your answer...', submit: 'Submit', correctAnswer: 'Correct Answer',
@@ -233,6 +240,7 @@ export default function App() {
       goalReached: 'Goal reached!', perfectScore: 'Perfect!', lessonDone: 'Done!',
       earned: 'Earned', returnHome: 'Return Home', goalBonus: (r: number) => `Goal Bonus: +${r} Points!`,
       locked: 'Locked', unlocked: 'Unlocked',
+      modelLabel: 'AI Model', modelDoubao: 'Doubao (Default)', modelGemini: 'Gemini Backup',
     },
     th: {
       setupTitle: 'ปรับแต่งบทเรียนของคุณ', setupDesc: 'บอก AI ความต้องการของคุณ',
@@ -243,8 +251,7 @@ export default function App() {
       loadingImages: 'กำลังสร้างภาพ...', loadingWriting: 'กำลังเขียนบทเรียน...',
       loadingMagic: 'กำลังเกิดขึ้น!', loadingAI: 'AI กำลังรวมความรู้',
       dailyGoal: 'เป้าหมายรายวัน', museum: 'พิพิธภัณฑ์', museumTitle: 'พิพิธภัณฑ์',
-      apiKeyLabel: 'API Key', speechRateLabel: 'ความเร็วเสียง',
-      speechRateSlow: 'ช้า', speechRateNormal: 'ปกติ', speechRateFast: 'เร็ว',
+      speechRateLabel: 'ความเร็วเสียง', speechRateSlow: 'ช้า', speechRateNormal: 'ปกติ', speechRateFast: 'เร็ว',
       streakLabel: 'วันต่อเนื่อง', pointsLabel2: 'คะแนน', todayProgress: 'ความก้าวหน้าวันนี้',
       levels: { Foundations: 'พื้นฐาน', Elementary: 'เริ่มต้น', Intermediate: 'กลาง', Advanced: 'สูง' },
       focuses: { Listening: 'ฟัง', Speaking: 'พูด', Reading: 'อ่าน', Writing: 'เขียน', Comprehensive: 'ครอบคลุม' },
@@ -262,10 +269,16 @@ export default function App() {
       goalReached: 'ถึงเป้าหมาย!', perfectScore: 'สมบูรณ์แบบ!', lessonDone: 'เสร็จแล้ว!',
       earned: 'ได้รับ', returnHome: 'กลับหน้าแรก', goalBonus: (r: number) => `โบนัส: +${r} คะแนน!`,
       locked: 'ยังไม่ปลดล็อก', unlocked: 'ปลดล็อกแล้ว',
+      modelLabel: 'โมเดล AI', modelDoubao: 'Doubao (ค่าเริ่มต้น)', modelGemini: 'Gemini สำรอง',
     }
   };
 
   const currentT = t[profile.auxiliaryLanguage === 'th' ? 'th' : profile.auxiliaryLanguage === 'en' ? 'en' : 'zh'];
+
+  // ✅ Key 选择器标签
+  const currentModelLabel = selectedKeyIndex === 0
+    ? (doubaoAvailable ? 'Doubao' : 'Gemini K1')
+    : `Gemini K${selectedKeyIndex}`;
 
   const MuseumView = () => {
     const [mLang, setMLang] = useState<'zh' | 'en' | 'th'>('zh');
@@ -281,7 +294,6 @@ export default function App() {
     const uCount = profile.unlockedAchievements.length;
     const dTarget = uCount >= 9 ? 10 : uCount >= 5 ? 9 : 5;
     const mPct = (uCount / dTarget) * 100;
-
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-10 pb-32">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
@@ -307,7 +319,6 @@ export default function App() {
             </div>
           </div>
         </div>
-
         <div className="bg-thai-blue p-8 rounded-[2.5rem] border border-white/5 relative overflow-hidden">
           <div className="absolute top-0 right-0 p-8 opacity-5"><Gamepad2 size={120} /></div>
           <div className="relative z-10 flex flex-col md:flex-row items-center gap-8">
@@ -324,7 +335,6 @@ export default function App() {
             </div>
           </div>
         </div>
-
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {APP_ACHIEVEMENTS.map((ach, idx) => {
             const unlocked = profile.unlockedAchievements.includes(ach.id);
@@ -338,8 +348,6 @@ export default function App() {
                   <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${tierColor}`}>{regionName}</span>
                   {!unlocked && <span className="px-3 py-1 bg-white/5 rounded-full text-[10px] font-black text-slate-400">✧ {ach.price.toLocaleString()}</span>}
                 </div>
-
-                {/* ✅ 已解锁：显示真实GCS图片；未解锁：显示模糊占位符 */}
                 <div className="relative w-full aspect-square rounded-3xl overflow-hidden bg-white/5">
                   {unlocked && ach.specialtyImagePrompt ? (
                     <img src={ach.specialtyImagePrompt} alt={ach.specialty[mLang]} className="w-full h-full object-cover"
@@ -351,7 +359,6 @@ export default function App() {
                     </div>
                   )}
                 </div>
-
                 <div className="flex-1 flex flex-col gap-2">
                   <h3 className={`text-lg font-black ${unlocked ? 'text-white' : 'text-slate-500'}`}>{unlocked ? ach.specialty[mLang] : ach.province[mLang]}</h3>
                   <p className={`text-sm leading-relaxed ${unlocked ? 'text-slate-300' : 'text-slate-600 italic'}`}>
@@ -402,6 +409,57 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {/* ✅ AI 模型选择器（下拉菜单） */}
+            <div className="relative" onClick={e => e.stopPropagation()}>
+              <button
+                onClick={() => setShowKeyDropdown(!showKeyDropdown)}
+                className="flex items-center gap-2 px-3 py-2 bg-white/5 rounded-2xl border border-white/10 text-xs font-bold text-slate-300 hover:bg-white/10 transition-all"
+              >
+                <Key size={14} className="text-thai-gold" />
+                <span className="hidden sm:inline">{currentModelLabel}</span>
+                <ChevronDown size={12} className={`transition-transform ${showKeyDropdown ? 'rotate-180' : ''}`} />
+              </button>
+              <AnimatePresence>
+                {showKeyDropdown && (
+                  <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+                    className="absolute right-0 top-full mt-2 w-52 bg-thai-blue border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50">
+                    <div className="p-2 space-y-1">
+                      <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest px-3 pt-1 pb-2">{currentT.modelLabel}</p>
+                      {/* Doubao 选项 */}
+                      <button onClick={() => { setSelectedKeyIndex(0); setShowKeyDropdown(false); }}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${selectedKeyIndex === 0 ? 'bg-thai-gold text-thai-navy' : 'text-slate-300 hover:bg-white/5'}`}>
+                        <span className="text-base">🤖</span>
+                        <div className="text-left">
+                          <div>{currentT.modelDoubao}</div>
+                          <div className={`text-[10px] ${selectedKeyIndex === 0 ? 'text-thai-navy/60' : 'text-slate-500'}`}>Seed 2.0 Lite</div>
+                        </div>
+                        {selectedKeyIndex === 0 && <CheckCircle2 size={14} className="ml-auto" />}
+                      </button>
+                      {/* Gemini Keys 分隔线 */}
+                      <div className="border-t border-white/5 pt-1 mt-1">
+                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest px-3 py-1">{currentT.modelGemini}</p>
+                        {availableKeys.filter(k => k.available).map(k => (
+                          <button key={k.index} onClick={() => { setSelectedKeyIndex(k.index); setShowKeyDropdown(false); }}
+                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${selectedKeyIndex === k.index ? 'bg-thai-gold text-thai-navy' : 'text-slate-300 hover:bg-white/5'}`}>
+                            <Key size={14} />
+                            <div className="text-left">
+                              <div>{k.label}</div>
+                              <div className={`text-[10px] ${selectedKeyIndex === k.index ? 'text-thai-navy/60' : 'text-slate-500'}`}>gemini-2.5-flash</div>
+                            </div>
+                            {selectedKeyIndex === k.index && <CheckCircle2 size={14} className="ml-auto" />}
+                          </button>
+                        ))}
+                        {availableKeys.every(k => !k.available) && (
+                          <p className="text-xs text-slate-500 px-3 py-2">未配置 Gemini Key</p>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
             <div className="flex bg-white/5 p-1 rounded-[1.25rem] border border-white/10">
               <button onClick={() => setStep('setup')} className={`p-2.5 rounded-xl transition-all flex items-center gap-2 ${step !== 'museum' ? 'bg-thai-gold text-thai-navy' : 'text-slate-400 hover:text-white'}`}>
                 <Home size={20} /><span className="text-xs font-bold hidden md:block">{currentT.home}</span>
@@ -434,6 +492,7 @@ export default function App() {
                 <h2 className="text-4xl font-display font-black mb-4 text-white uppercase tracking-tight">{currentT.setupTitle}</h2>
                 <p className="text-slate-400">{currentT.setupDesc}</p>
               </div>
+              {/* 今日进度条 */}
               <div className="bg-thai-blue rounded-3xl p-6 mb-6 border border-white/5">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-sm font-black text-slate-400 uppercase tracking-widest">{currentT.todayProgress}</span>
@@ -511,18 +570,6 @@ export default function App() {
                       <button key={rate} onClick={() => handleSpeechRateChange(rate)}
                         className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all border-2 ${speechRate === rate ? 'bg-thai-gold text-thai-navy border-thai-gold' : 'bg-white/5 text-slate-300 border-white/10 hover:border-white/30'}`}>{label}</button>
                     ))}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest"><Key size={16} className="text-thai-gold" />{currentT.apiKeyLabel}</label>
-                  <div className="flex gap-3">
-                    {availableKeys.filter(k => k.available).map(k => (
-                      <button key={k.index} onClick={() => handleKeySelect(k.index)}
-                        className={`flex-1 py-3 rounded-2xl font-black text-sm flex items-center justify-center gap-2 transition-all border-2 ${selectedKeyIndex === k.index ? 'bg-thai-gold text-thai-navy border-thai-gold' : 'bg-white/5 text-slate-300 border-white/10 hover:border-white/30'}`}>
-                        <Key size={14} />{k.label}{selectedKeyIndex === k.index && <CheckCircle2 size={14} />}
-                      </button>
-                    ))}
-                    {availableKeys.every(k => !k.available) && <p className="text-sm text-red-400 font-bold">未检测到 API Key</p>}
                   </div>
                 </div>
                 <button onClick={() => handleStart()} className="w-full bg-thai-gold hover:scale-[1.02] active:scale-95 text-thai-navy font-black py-5 rounded-[2rem] shadow-xl transition-all flex items-center justify-center gap-2 group">
@@ -645,9 +692,7 @@ export default function App() {
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                               {ex.options.map((opt, oi) => (
                                 <button key={oi} onClick={() => setAnswers({ ...answers, [idx]: opt })}
-                                  className={`p-4 rounded-2xl text-left text-sm font-black transition-all border-2 ${answers[idx] === opt ? 'bg-thai-gold text-thai-navy border-thai-gold' : 'bg-white/5 text-slate-300 border-white/10 hover:border-white/20'}`}>
-                                  {opt}
-                                </button>
+                                  className={`p-4 rounded-2xl text-left text-sm font-black transition-all border-2 ${answers[idx] === opt ? 'bg-thai-gold text-thai-navy border-thai-gold' : 'bg-white/5 text-slate-300 border-white/10 hover:border-white/20'}`}>{opt}</button>
                               ))}
                             </div>
                           ) : (
@@ -723,7 +768,7 @@ export default function App() {
       </main>
 
       <footer className="py-16 border-t border-white/5 mt-16 bg-black/20">
-        <p className="text-center text-slate-500 text-[10px] font-black uppercase tracking-[0.3em]">© 2026 Sawasdee Learn • Powered by Gemini AI</p>
+        <p className="text-center text-slate-500 text-[10px] font-black uppercase tracking-[0.3em]">© 2026 Sawasdee Learn • Powered by Doubao & Gemini AI</p>
       </footer>
     </div>
   );
