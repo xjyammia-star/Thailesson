@@ -1,5 +1,20 @@
 {
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Frame-Options",
+          "value": "ALLOW-FROM https://ischoolthai.vercel.app"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "frame-ancestors 'self' https://ischoolthai.vercel.app"
+        }
+      ]
+    }
   ]
 }
